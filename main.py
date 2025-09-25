@@ -1,78 +1,138 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk
 import os
 from datetime import datetime
 from database import *
 
-# Constants
+# ---------------- CONSTANTS ----------------
 UNIT_COST = 5.0
 SALE_PRICE = 25.0
-IMAGE_DIR = "assets/images/"
+IMAGE_DIR = "assets/images/" 
+VIEWER_IMAGE_SIZE = (180, 180) 
+LOGO_PATH = "assets/logo.png" # Assuming your logo is here
 
+# ---------------- APP CLASS ----------------
 class FragranceManagerApp:
     def __init__(self, root):
         self.root = root
         self.root.title("LJ Fragrances Manager")
-        self.root.geometry("1500x700")
-        self.selected_image_path = None
+        self.root.geometry("1600x900")
         self.selected_id = None
         self.selected_customer_id = None
-        self.image_cache = {}  # keep PhotoImage refs here to avoid GC
+        self.selected_supply_id = None
+        self.selected_oil_id = None
+        self.image_cache = {}
+        self.selected_image_path = None
+        self.current_fragrance_image = None
+        self.logo_photo = None # Reference to prevent garbage collection
+        
+        init_db() 
 
         self.setup_ui()
         self.prefill_fragrances()
+        self.prefill_supplies()
+        self.prefill_oils()
 
-    # ----------------- UI SETUP -----------------
+    # ---------------- UI SETUP ----------------
     def setup_ui(self):
+        # Apply modern style
+        style = ttk.Style()
+        style.configure('Modern.TButton', font=('Arial', 10, 'bold'), padding=5)
+        style.configure('Bold.TLabel', font=('Arial', 10, 'bold'))
+        
+        # Main Layout: Top frame for image/details, Bottom for tabs
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(expand=True, fill="both", padx=10, pady=10)
+
+        # Top Frame: Logo, Search, and Image/Detail Viewer
+        top_frame = ttk.Frame(main_frame)
+        top_frame.pack(fill="x", pady=5)
+        
+        # ---------------- LOGO PLACEMENT ----------------
+        self.load_logo(top_frame)
+        
+        # LEFT SIDE: Search
+        search_container = ttk.Frame(top_frame) # New container for logo + search
+        search_container.pack(side="left", padx=5)
+
+        search_frame = ttk.Frame(search_container)
+        search_frame.pack(side="top", anchor="w", pady=(10, 0)) # Positioned below logo
+
+        ttk.Label(search_frame, text="Search Fragrance:", font=('Arial', 10, 'bold')).pack(side="left", padx=5)
+        self.search_entry = ttk.Entry(search_frame, width=30)
+        self.search_entry.pack(side="left", padx=5)
+        ttk.Button(search_frame, text="Search", command=self.search_fragrance).pack(side="left", padx=5)
+        ttk.Button(search_frame, text="Clear", command=self.refresh_all_tables).pack(side="left", padx=5)
+
+        # RIGHT SIDE: Image Viewer
+        self.image_viewer_frame = ttk.LabelFrame(top_frame, text="Fragrance Details", padding="10")
+        self.image_viewer_frame.pack(side="right", fill="y", padx=20)
+        
+        self.image_label = ttk.Label(self.image_viewer_frame, width=20, anchor="center")
+        self.image_label.grid(row=0, column=0, padx=5, pady=5)
+        
+        self.detail_text_label = ttk.Label(self.image_viewer_frame, justify=tk.LEFT, text="Select a fragrance to view details.", width=35)
+        self.detail_text_label.grid(row=0, column=1, padx=10, pady=5, sticky="nsw")
+
+        # Tab Control (Notebook)
+        self.tabControl = ttk.Notebook(main_frame)
+        self.tabControl.pack(expand=1, fill="both", pady=10)
+
         # Tabs
-        self.tabControl = ttk.Notebook(self.root)
         self.men_tab = ttk.Frame(self.tabControl)
         self.women_tab = ttk.Frame(self.tabControl)
         self.unisex_tab = ttk.Frame(self.tabControl)
         self.customer_tab = ttk.Frame(self.tabControl)
         self.sales_tab = ttk.Frame(self.tabControl)
+        self.supplies_tab = ttk.Frame(self.tabControl)
+        self.oils_tab = ttk.Frame(self.tabControl)
 
         self.tabControl.add(self.men_tab, text="Men")
         self.tabControl.add(self.women_tab, text="Women")
         self.tabControl.add(self.unisex_tab, text="Unisex")
         self.tabControl.add(self.customer_tab, text="Customers")
         self.tabControl.add(self.sales_tab, text="Sales")
-        self.tabControl.pack(expand=1, fill="both")
+        self.tabControl.add(self.supplies_tab, text="Supplies")
+        self.tabControl.add(self.oils_tab, text="Oils")
+        
+        self.setup_fragrance_tab(self.men_tab, "Men")
+        self.setup_fragrance_tab(self.women_tab, "Women")
+        self.setup_fragrance_tab(self.unisex_tab, "Unisex")
+        
+        self.setup_customer_tab(self.customer_tab)
+        self.setup_sales_tab(self.sales_tab)
+        self.setup_supplies_tab(self.supplies_tab)
+        self.setup_oils_tab(self.oils_tab)
 
-        # Search bar
-        search_frame = ttk.Frame(self.root)
-        search_frame.pack(fill="x")
-        ttk.Label(search_frame, text="Search by Name/Inspired By:").pack(side="left", padx=5)
-        self.search_entry = ttk.Entry(search_frame)
-        self.search_entry.pack(side="left", padx=5)
-        ttk.Button(search_frame, text="Search", command=self.search_fragrance).pack(side="left", padx=5)
-        ttk.Button(search_frame, text="Clear", command=self.refresh_all_tables).pack(side="left", padx=5)
+    def load_logo(self, parent_frame):
+        """Loads and places the logo image."""
+        if os.path.exists(LOGO_PATH):
+            try:
+                # Load, resize (e.g., 100x50), and store the image reference
+                img = Image.open(LOGO_PATH).resize((250, 200)) 
+                self.logo_photo = ImageTk.PhotoImage(img)
+                
+                logo_label = ttk.Label(parent_frame, image=self.logo_photo)
+                logo_label.pack(side="left", padx=20, anchor="n")
+                
+            except Exception as e:
+                print(f"Error loading logo: {e}")
+                # Fallback text if image fails to load
+                ttk.Label(parent_frame, text="LJ Fragrances", font=('Arial', 18, 'bold')).pack(side="left", padx=20, anchor="n")
+        else:
+            # Fallback text if logo file is missing
+            ttk.Label(parent_frame, text="LJ Fragrances", font=('Arial', 18, 'bold')).pack(side="left", padx=20, anchor="n")
 
-        # Tables
-        self.setup_fragrance_table(self.men_tab, "Men")
-        self.setup_fragrance_table(self.women_tab, "Women")
-        self.setup_fragrance_table(self.unisex_tab, "Unisex")
-        self.setup_customer_table()
-        self.setup_sales_table()
-
-        # Buttons
-        btn_frame = ttk.Frame(self.root)
-        btn_frame.pack(pady=5)
-        ttk.Button(btn_frame, text="Add Fragrance", command=self.add_fragrance).grid(row=0, column=0, padx=5)
-        ttk.Button(btn_frame, text="Edit Fragrance", command=self.edit_fragrance).grid(row=0, column=1, padx=5)
-        ttk.Button(btn_frame, text="Delete Fragrance", command=self.delete_fragrance).grid(row=0, column=2, padx=5)
-        ttk.Button(btn_frame, text="Record Sale", command=self.record_sale).grid(row=0, column=3, padx=5)
-        ttk.Button(btn_frame, text="Add Customer", command=self.add_customer).grid(row=0, column=4, padx=5)
-        ttk.Button(btn_frame, text="Edit Customer", command=self.edit_customer).grid(row=0, column=5, padx=5)
-        ttk.Button(btn_frame, text="Delete Customer", command=self.delete_customer).grid(row=0, column=6, padx=5)
-
-    # ----------------- TABLE SETUP -----------------
-    def setup_fragrance_table(self, parent, gender):
+    # ---------------- TAB-SPECIFIC LAYOUTS (No functional change) ----------------
+    def setup_fragrance_tab(self, parent, gender):
+        # 1. Container for Table
+        table_frame = ttk.Frame(parent)
+        table_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Table setup
         columns = ("Name", "Inspired By", "Unit Cost", "Sale Price", "Quantity", "Total Cost", "Retail Value", "Gender")
-        tree = ttk.Treeview(parent, columns=columns, show="tree headings", height=15)
-
-        # Thumbnail column (#0)
+        tree = ttk.Treeview(table_frame, columns=columns, show="tree headings", height=20)
         tree.heading("#0", text="Thumbnail")
         tree.column("#0", width=70, anchor="center")
 
@@ -83,52 +143,126 @@ class FragranceManagerApp:
         tree.pack(side="left", fill="both", expand=True)
         setattr(self, f"{gender.lower()}_tree", tree)
 
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
         tree.configure(yscroll=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
 
         tree.bind("<<TreeviewSelect>>", self.on_fragrance_select)
         self.populate_table(tree, gender)
 
-    def setup_customer_table(self):
+        # 2. Tab-Specific Buttons
+        btn_frame = ttk.Frame(parent)
+        btn_frame.pack(fill="x", pady=5, padx=5)
+
+        ttk.Button(btn_frame, text="➕ Add Fragrance", command=self.add_fragrance, style='Modern.TButton').pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="✏️ Edit Fragrance", command=self.edit_fragrance, style='Modern.TButton').pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="🗑️ Delete Fragrance", command=self.delete_fragrance, style='Modern.TButton').pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="💵 Record Sale", command=self.record_sale, style='Modern.TButton').pack(side="right", padx=5)
+
+    def setup_customer_tab(self, parent):
+        table_frame = ttk.Frame(parent)
+        table_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Table setup
         columns = ("ID", "Name", "Email", "Phone", "City", "Reference")
-        tree = ttk.Treeview(self.customer_tab, columns=columns, show="headings")
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         for col in columns:
             tree.heading(col, text=col)
             tree.column(col, width=150)
         tree.pack(side="left", fill="both", expand=True)
         self.customer_tree = tree
-        scrollbar = ttk.Scrollbar(self.customer_tab, orient="vertical", command=tree.yview)
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
         tree.configure(yscroll=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         tree.bind("<<TreeviewSelect>>", self.on_customer_select)
         self.populate_customers()
 
-    def setup_sales_table(self):
+        # Tab-Specific Buttons
+        btn_frame = ttk.Frame(parent)
+        btn_frame.pack(fill="x", pady=5, padx=5)
+        ttk.Button(btn_frame, text="➕ Add Customer", command=self.add_customer, style='Modern.TButton').pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="✏️ Edit Customer", command=self.edit_customer, style='Modern.TButton').pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="🗑️ Delete Customer", command=self.delete_customer, style='Modern.TButton').pack(side="left", padx=5)
+
+    def setup_sales_tab(self, parent):
+        table_frame = ttk.Frame(parent)
+        table_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Table setup
         columns = ("ID", "Fragrance", "Customer", "Qty Sold", "Unit Cost", "Sale Price", "Revenue", "Profit", "Date")
-        tree = ttk.Treeview(self.sales_tab, columns=columns, show="headings")
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         for col in columns:
             tree.heading(col, text=col)
             tree.column(col, width=120)
         tree.pack(side="left", fill="both", expand=True)
-        scrollbar = ttk.Scrollbar(self.sales_tab, orient="vertical", command=tree.yview)
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
         tree.configure(yscroll=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         self.sales_tree = tree
         self.populate_sales()
+        
+        # No CRUD buttons needed for Sales, as sales are recorded from the Fragrance tab
 
-    # ----------------- POPULATE -----------------
+    def setup_supplies_tab(self, parent):
+        table_frame = ttk.Frame(parent)
+        table_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Table setup
+        columns = ("ID", "Name", "Price", "Purchase Link", "Quantity")
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=150)
+        tree.pack(side="left", fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscroll=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.supplies_tree = tree
+        tree.bind("<<TreeviewSelect>>", self.on_supply_select)
+        self.populate_supplies()
+        
+        # Tab-Specific Buttons
+        btn_frame = ttk.Frame(parent)
+        btn_frame.pack(fill="x", pady=5, padx=5)
+        ttk.Button(btn_frame, text="➕ Add Supply", command=self.add_supply, style='Modern.TButton').pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="✏️ Edit Supply", command=self.edit_supply, style='Modern.TButton').pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="🗑️ Delete Supply", command=self.delete_supply, style='Modern.TButton').pack(side="left", padx=5)
+
+    def setup_oils_tab(self, parent):
+        table_frame = ttk.Frame(parent)
+        table_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Table setup
+        columns = ("ID", "Name", "Size(ml)", "Price", "Purchase Link", "Quantity")
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings")
+        for col in columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=120)
+        tree.pack(side="left", fill="both", expand=True)
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscroll=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self.oils_tree = tree
+        tree.bind("<<TreeviewSelect>>", self.on_oil_select)
+        self.populate_oils()
+
+        # Tab-Specific Buttons
+        btn_frame = ttk.Frame(parent)
+        btn_frame.pack(fill="x", pady=5, padx=5)
+        ttk.Button(btn_frame, text="➕ Add Oil", command=self.add_oil, style='Modern.TButton').pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="✏️ Edit Oil", command=self.edit_oil, style='Modern.TButton').pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="🗑️ Delete Oil", command=self.delete_oil, style='Modern.TButton').pack(side="left", padx=5)
+        
+    # ---------------- POPULATE (No functional change) ----------------
     def populate_table(self, tree, gender, query=None):
         for row in tree.get_children():
             tree.delete(row)
-
         fragrances = get_all_fragrances_by_gender(gender)
         for f in fragrances:
             if query:
                 q = query.lower()
                 if q not in (f[1] or "").lower() and q not in (f[7] or "").lower():
                     continue
-
             try:
                 unit_cost = float(f[5])
                 sale_price = float(f[6])
@@ -143,7 +277,7 @@ class FragranceManagerApp:
             photo = None
             if f[9] and os.path.exists(f[9]):
                 try:
-                    img = Image.open(f[9]).resize((50, 50))
+                    img = Image.open(f[9]).resize((50,50))
                     photo = ImageTk.PhotoImage(img)
                     self.image_cache[str(f[0])] = photo
                 except:
@@ -152,7 +286,6 @@ class FragranceManagerApp:
             tags = ()
             if quantity < 5:
                 tags = ("low_stock",)
-
             tree.insert("", "end",
                         iid=str(f[0]),
                         image=photo if photo else "",
@@ -166,7 +299,6 @@ class FragranceManagerApp:
                                 str(f[3] or "")
                                 ),
                         tags=tags)
-
         tree.tag_configure("low_stock", background="red")
 
     def populate_customers(self):
@@ -181,32 +313,146 @@ class FragranceManagerApp:
         for s in get_all_sales():
             self.sales_tree.insert("", "end", values=s)
 
-    # ----------------- PREFILL -----------------
+    def populate_supplies(self):
+        for row in self.supplies_tree.get_children():
+            self.supplies_tree.delete(row)
+        for s in get_all_supplies():
+            self.supplies_tree.insert("", "end", iid=str(s[0]), values=s)
+
+    def populate_oils(self):
+        for row in self.oils_tree.get_children():
+            self.oils_tree.delete(row)
+        for o in get_all_oils():
+            self.oils_tree.insert("", "end", iid=str(o[0]), values=o)
+
+    # ---------------- PREFILL (No functional change) ----------------
     def prefill_fragrances(self):
         prefill_list = [
-            ("LJ Apex", "", "Men", "", UNIT_COST, SALE_PRICE, "Creed Aventus Absolute", 10, ""),
-            ("LJ Alpha X", "", "Men", "", UNIT_COST, SALE_PRICE, "Creed Aventus", 10, ""),
-            ("LJ Midnight Phantom", "", "Men", "", UNIT_COST, SALE_PRICE, "Bleu de Chanel Parfum", 10, ""),
-            ("LJ Shadow Diamond", "", "Men", "", UNIT_COST, SALE_PRICE, "Armani Black Carat Diamonds", 10, ""),
-            ("LJ Celestial 540", "", "Women", "", UNIT_COST, SALE_PRICE, "Maison Francis Kurkdjian Baccarat Rouge 540", 10, "")
+            # MEN'S HOMAGES
+            ("LJ Apex", "Dominant, smoky, legendary", "Men", "Aromatic", UNIT_COST, SALE_PRICE, "Creed Aventus Absolute", 10, ""),
+            ("LJ Alpha X", "Bold, fruity, unstoppable", "Men", "Fruity", UNIT_COST, SALE_PRICE, "Creed Aventus", 10, ""),
+            ("LJ Midnight Phantom", "Dark, elegant, powerful", "Men", "Woody", UNIT_COST, SALE_PRICE, "Bleu de Chanel Parfum", 10, ""),
+            ("LJ Savage Apex", "Raw, spicy, untamed", "Men", "Spicy", UNIT_COST, SALE_PRICE, "Dior Sauvage Elixir", 10, ""),
+            ("LJ Ocean Prime", "Fresh, aquatic, eternal", "Men", "Aquatic", UNIT_COST, SALE_PRICE, "Giorgio Armani Acqua di Gio", 10, ""),
+            ("LJ Titan Code", "Magnetic, daring, timeless", "Men", "Aromatic", UNIT_COST, SALE_PRICE, "Jean Paul Gaultier", 10, ""),
+            ("LJ Inferno Blast", "Fiery, bold, intoxicating", "Men", "Spicy", UNIT_COST, SALE_PRICE, "Viktor & Rolf Spicebomb Extreme", 10, ""),
+            ("LJ Gold Dominion", "Opulent, sweet, high-status", "Men", "Sweet", UNIT_COST, SALE_PRICE, "Paco Rabanne 1 Million", 10, ""),
+            ("LJ Arctic Storm", "Crisp, fresh, exhilarating", "Men", "Fresh", UNIT_COST, SALE_PRICE, "Dolce & Gabbana Light Blue", 10, ""),
+            ("LJ Voltage", "Electrifying, mysterious, addictive", "Men", "Woody", UNIT_COST, SALE_PRICE, "Carolina Herrera Bad Boy", 10, ""),
+            ("LJ Blackout X", "Dark, spicy, dangerously smooth", "Men", "Spicy", UNIT_COST, SALE_PRICE, "Azzaro The Most Wanted", 10, ""),
+            ("LJ Eros Fury", "Explosive, citrusy, high-voltage", "Men", "Citrus", UNIT_COST, SALE_PRICE, "Versace Eros Energy", 10, ""),
+            ("LJ Eros Inferno", "Sweet, seductive, legendary", "Men", "Sweet", UNIT_COST, SALE_PRICE, "Versace Eros", 10, ""),
+            ("LJ Obsidian Woods", "Smoky, woody, enigmatic", "Men", "Woody", UNIT_COST, SALE_PRICE, "Le Labo Santal 33", 10, ""),
+            ("LJ Shadow Diamond", "Dark, luxurious, mysterious", "Men", "Woody", UNIT_COST, SALE_PRICE, "Armani Black Carat Diamonds", 10, ""),
+            ("LJ Silver Stratos", "Icy, fresh, unstoppable", "Men", "Fresh", UNIT_COST, SALE_PRICE, "Creed Silver Mountain Water", 10, ""),
+            ("LJ Monarch", "Rich, warm, effortlessly royal", "Men", "Warm", UNIT_COST, SALE_PRICE, "Valentino Uomo", 10, ""),
+            ("LJ Desert Mirage", "Amber, warm, hypnotic", "Men", "Amber", UNIT_COST, SALE_PRICE, "Al-Rehab Golden Sand", 10, ""),
+            ("LJ Elixir Prime", "Aromatic, modern, high-class", "Men", "Aromatic", UNIT_COST, SALE_PRICE, "YSL Y Elixir", 10, ""),
+            ("LJ Driftwood Noir", "Exotic, rugged, free-spirited", "Men", "Woody", UNIT_COST, SALE_PRICE, "Caribbean Driftwood", 10, ""),
+            
+            # WOMEN'S HOMAGES
+            ("LJ Celestial 540", "Ethereal, luminous, addictive", "Women", "Gourmand", UNIT_COST, SALE_PRICE, "Maison Francis Kurkdjian Baccarat Rouge 540", 10, ""),
+            ("LJ Opulent Chic", "Timeless, elegant, high-class", "Women", "Chypre", UNIT_COST, SALE_PRICE, "Chanel Coco Mademoiselle", 10, ""),
+            ("LJ Femme Fatalis", "Mysterious, bold, dangerously sexy", "Women", "Oriental", UNIT_COST, SALE_PRICE, "Carolina Herrera Good Girl", 10, ""),
+            ("LJ Sugar Rush", "Sweet, playful, irresistibly fun", "Women", "Gourmand", UNIT_COST, SALE_PRICE, "Pink Sugar", 10, ""),
+            ("LJ Velvet Ember", "Lush, warm, seductive", "Women", "Sweet", UNIT_COST, SALE_PRICE, "Prada Candy", 10, ""),
+            ("LJ Empress Gold", "Fierce, floral, unstoppable", "Women", "Floral", UNIT_COST, SALE_PRICE, "YSL Libre", 10, ""),
+            ("LJ Moonlight Rouge", "Luminous, alluring, enchanting", "Women", "Oriental", UNIT_COST, SALE_PRICE, "Jimmy Choo I Want Choo", 10, ""),
+            ("LJ Solar Essence", "Silky, creamy, golden warmth", "Women", "Warm", UNIT_COST, SALE_PRICE, "Mango Butter", 10, "")
         ]
+        
         for f in prefill_list:
             if not get_fragrance_by_name(f[0]):
                 insert_fragrance(f)
         self.refresh_all_tables()
 
-    # ----------------- SELECTION -----------------
+    def prefill_supplies(self):
+        prefill_list = [
+            ("Bottles", 1.5, "https://example.com/bottles", 50),
+            ("Sprayers", 0.8, "https://example.com/sprayers", 100)
+        ]
+        for s in prefill_list:
+            if not get_supply_by_name(s[0]):
+                insert_supply(s)
+        self.populate_supplies()
+
+    def prefill_oils(self):
+        prefill_list = [
+            ("Jasmine Oil", 10, 5.0, "https://example.com/jasmine", 20),
+            ("Rose Oil", 15, 7.5, "https://example.com/rose", 15)
+        ]
+        for o in prefill_list:
+            if not get_oil_by_name(o[0]):
+                insert_oil(o)
+        self.populate_oils()
+
+    # ---------------- SELECTION & VIEW (No functional change) ----------------
     def on_fragrance_select(self, event):
         tree = event.widget
         selected = tree.selection()
-        self.selected_id = int(selected[0]) if selected else None
+        
+        if not selected:
+            self.selected_id = None
+            self.update_fragrance_viewer(None)
+            return
+
+        self.selected_id = int(selected[0])
+        self.update_fragrance_viewer(self.selected_id)
+
+    def update_fragrance_viewer(self, fid):
+        if not fid:
+            self.image_viewer_frame.config(text="Fragrance Details")
+            self.image_label.config(image='', text="No Image")
+            self.detail_text_label.config(text="Select a fragrance to view details.")
+            self.current_fragrance_image = None
+            return
+
+        f_data = get_fragrance_by_id(fid)
+        if not f_data:
+            return
+
+        name, desc, gender, _, unit_cost, sale_price, inspired_by, qty, img_path = f_data[1:]
+
+        self.image_viewer_frame.config(text=name)
+
+        details = (
+            f"Name: {name}\n"
+            f"Inspired By: {inspired_by}\n"
+            f"Gender: {gender}\n"
+            f"Cost: ${unit_cost:.2f} | Price: ${sale_price:.2f}\n"
+            f"Stock: {qty}\n"
+            f"\nDescription: {desc or 'N/A'}"
+        )
+        self.detail_text_label.config(text=details)
+
+        if img_path and os.path.exists(img_path):
+            try:
+                img = Image.open(img_path).resize(VIEWER_IMAGE_SIZE) 
+                photo = ImageTk.PhotoImage(img)
+                self.current_fragrance_image = photo 
+                self.image_label.config(image=self.current_fragrance_image, text="")
+            except Exception:
+                self.image_label.config(text="Image Error", image='')
+        else:
+            self.image_label.config(text="No Image", image='')
+
 
     def on_customer_select(self, event):
         tree = event.widget
         selected = tree.selection()
         self.selected_customer_id = int(selected[0]) if selected else None
 
-    # ----------------- CRUD -----------------
+    def on_supply_select(self, event):
+        tree = event.widget
+        selected = tree.selection()
+        self.selected_supply_id = int(selected[0]) if selected else None
+
+    def on_oil_select(self, event):
+        tree = event.widget
+        selected = tree.selection()
+        self.selected_oil_id = int(selected[0]) if selected else None
+
+    # ---------------- CRUD/FORMS/SEARCH (No functional change) ----------------
     def add_fragrance(self):
         self.open_fragrance_form()
 
@@ -223,16 +469,15 @@ class FragranceManagerApp:
         delete_fragrance(self.selected_id)
         self.refresh_all_tables()
         self.selected_id = None
+        self.update_fragrance_viewer(None)
 
     def add_customer(self):
         self.open_customer_form()
-
     def edit_customer(self):
         if not self.selected_customer_id:
             messagebox.showwarning("No Selection", "Select customer to edit")
             return
         self.open_customer_form(edit=True)
-
     def delete_customer(self):
         if not self.selected_customer_id:
             messagebox.showwarning("No Selection", "Select customer to delete")
@@ -240,17 +485,42 @@ class FragranceManagerApp:
         delete_customer(self.selected_customer_id)
         self.populate_customers()
 
-    # ----------------- RECORD SALE -----------------
+    def add_supply(self):
+        self.open_supply_form()
+    def edit_supply(self):
+        if not self.selected_supply_id:
+            messagebox.showwarning("No Selection", "Select supply to edit")
+            return
+        self.open_supply_form(edit=True)
+    def delete_supply(self):
+        if not self.selected_supply_id:
+            messagebox.showwarning("No Selection", "Select supply to delete")
+            return
+        delete_supply(self.selected_supply_id)
+        self.populate_supplies()
+
+    def add_oil(self):
+        self.open_oil_form()
+    def edit_oil(self):
+        if not self.selected_oil_id:
+            messagebox.showwarning("No Selection", "Select oil to edit")
+            return
+        self.open_oil_form(edit=True)
+    def delete_oil(self):
+        if not self.selected_oil_id:
+            messagebox.showwarning("No Selection", "Select oil to delete")
+            return
+        delete_oil(self.selected_oil_id)
+        self.populate_oils()
+
     def record_sale(self):
         if not self.selected_id:
             messagebox.showwarning("No Selection", "Select fragrance to sell")
             return
-
         all_customers = get_all_customers()
         if not all_customers:
             messagebox.showwarning("No Customers", "No customers found. Please add a customer first.")
             return
-
         form = tk.Toplevel(self.root)
         form.title("Record Sale")
         form.geometry("400x300")
@@ -261,24 +531,14 @@ class FragranceManagerApp:
         cust_combo = ttk.Combobox(form, values=customers, textvariable=customer_var, state="readonly")
         cust_combo.grid(row=0, column=1, padx=5, pady=5)
 
-        if self.selected_customer_id:
-            for i, c in enumerate(all_customers):
-                if c[0] == self.selected_customer_id:
-                    cust_combo.current(i)
-                    break
-
         ttk.Label(form, text="Quantity:").grid(row=1, column=0, padx=5, pady=5)
         qty_entry = ttk.Entry(form)
         qty_entry.grid(row=1, column=1, padx=5, pady=5)
-
-        save_btn = ttk.Button(form, text="Save Sale")
-        save_btn.grid(row=2, column=1, pady=10)
 
         def save_sale():
             if not customer_var.get():
                 messagebox.showwarning("Error", "Select customer")
                 return
-
             try:
                 qty = int(qty_entry.get())
                 if qty <= 0:
@@ -286,40 +546,146 @@ class FragranceManagerApp:
             except:
                 messagebox.showerror("Error", "Quantity must be a positive number")
                 return
-
             fragrance = get_fragrance_by_id(self.selected_id)
             if not fragrance:
                 messagebox.showerror("Error", "Fragrance not found")
                 return
-
             current_qty = int(fragrance[8])
             if qty > current_qty:
                 messagebox.showerror("Error", f"Not enough stock. Available: {current_qty}")
                 return
-
             customer_id = int(customer_var.get().split("ID:")[1].replace(")", ""))
             unit_cost = float(fragrance[5])
             sale_price = float(fragrance[6])
             revenue = sale_price * qty
             profit = (sale_price - unit_cost) * qty
             date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
             insert_sale((self.selected_id, customer_id, qty, unit_cost, sale_price, revenue, profit, date))
             update_fragrance_quantity(self.selected_id, current_qty - qty)
-
             self.populate_sales()
             self.refresh_all_tables()
+            self.update_fragrance_viewer(self.selected_id)
             form.destroy()
 
-        save_btn.config(command=save_sale)
+        ttk.Button(form, text="Save Sale", command=save_sale).grid(row=2, column=1, pady=10)
 
-    # ----------------- UTILITY -----------------
-    def refresh_all_tables(self):
-        self.populate_table(self.men_tree, "Men")
-        self.populate_table(self.women_tree, "Women")
-        self.populate_table(self.unisex_tree, "Unisex")
-        self.populate_customers()
-        self.populate_sales()
+    def choose_image(self, entry_widget):
+        path = filedialog.askopenfilename(
+            title="Select Image",
+            filetypes=[("Image files","*.png *.jpg *.jpeg *.gif *.bmp"),("All files","*.*")]
+        )
+        if path:
+            entry_widget.delete(0, "end")
+            entry_widget.insert(0, path)
+
+    def open_fragrance_form(self, edit=False):
+        f_data = get_fragrance_by_id(self.selected_id) if edit else None
+        form = tk.Toplevel(self.root)
+        form.title("Edit Fragrance" if edit else "Add Fragrance")
+        form.geometry("400x400")
+
+        fields = ["Name", "Description", "Gender", "Category", "Unit Cost", "Sale Price", "Inspired By", "Quantity", "Image"]
+        entries = {}
+
+        for i, field in enumerate(fields):
+            ttk.Label(form, text=field).grid(row=i, column=0, padx=5, pady=5)
+            entry = ttk.Entry(form)
+            entry.grid(row=i, column=1, padx=5, pady=5)
+            if edit and f_data:
+                entry.insert(0, f_data[i+1] if i+1 < len(f_data) else "") 
+            entries[field] = entry
+
+        ttk.Button(form, text="Choose Image", command=lambda: self.choose_image(entries["Image"])).grid(row=8, column=2, padx=5)
+
+        def save():
+            data = [entries[f].get() for f in fields]
+            if edit:
+                update_fragrance(self.selected_id, data)
+            else:
+                insert_fragrance(data)
+            self.refresh_all_tables()
+            self.update_fragrance_viewer(self.selected_id)
+            form.destroy()
+
+        ttk.Button(form, text="Save", command=save).grid(row=9, column=1, pady=10)
+
+    def open_customer_form(self, edit=False):
+        c_data = get_customer_by_id(self.selected_customer_id) if edit else None
+        form = tk.Toplevel(self.root)
+        form.title("Edit Customer" if edit else "Add Customer")
+        form.geometry("400x300")
+        fields = ["Name", "Email", "Phone", "City", "Reference"]
+        entries = {}
+        for i, field in enumerate(fields):
+            ttk.Label(form, text=field).grid(row=i, column=0, padx=5, pady=5)
+            entry = ttk.Entry(form)
+            entry.grid(row=i, column=1, padx=5, pady=5)
+            if edit and c_data:
+                entry.insert(0, c_data[i+1])
+            entries[field] = entry
+
+        def save():
+            data = [entries[f].get() for f in fields]
+            if edit:
+                update_customer(self.selected_customer_id, data)
+            else:
+                insert_customer(data)
+            self.populate_customers()
+            form.destroy()
+
+        ttk.Button(form, text="Save", command=save).grid(row=len(fields), column=1, pady=10)
+
+    def open_supply_form(self, edit=False):
+        s_data = get_supply_by_id(self.selected_supply_id) if edit else None
+        form = tk.Toplevel(self.root)
+        form.title("Edit Supply" if edit else "Add Supply")
+        form.geometry("400x300")
+        fields = ["Name", "Price", "Purchase Link", "Quantity"]
+        entries = {}
+        for i, field in enumerate(fields):
+            ttk.Label(form, text=field).grid(row=i, column=0, padx=5, pady=5)
+            entry = ttk.Entry(form)
+            entry.grid(row=i, column=1, padx=5, pady=5)
+            if edit and s_data:
+                entry.insert(0, s_data[i+1])
+            entries[field] = entry
+
+        def save():
+            data = [entries[f].get() for f in fields]
+            if edit:
+                update_supply(self.selected_supply_id, data)
+            else:
+                insert_supply(data)
+            self.populate_supplies()
+            form.destroy()
+
+        ttk.Button(form, text="Save", command=save).grid(row=len(fields), column=1, pady=10)
+
+    def open_oil_form(self, edit=False):
+        o_data = get_oil_by_id(self.selected_oil_id) if edit else None
+        form = tk.Toplevel(self.root)
+        form.title("Edit Oil" if edit else "Add Oil")
+        form.geometry("400x300")
+        fields = ["Name", "Size(ml)", "Price", "Purchase Link", "Quantity"]
+        entries = {}
+        for i, field in enumerate(fields):
+            ttk.Label(form, text=field).grid(row=i, column=0, padx=5, pady=5)
+            entry = ttk.Entry(form)
+            entry.grid(row=i, column=1, padx=5, pady=5)
+            if edit and o_data:
+                entry.insert(0, o_data[i+1])
+            entries[field] = entry
+
+        def save():
+            data = [entries[f].get() for f in fields]
+            if edit:
+                update_oil(self.selected_oil_id, data)
+            else:
+                insert_oil(data)
+            self.populate_oils()
+            form.destroy()
+
+        ttk.Button(form, text="Save", command=save).grid(row=len(fields), column=1, pady=10)
 
     def search_fragrance(self):
         query = self.search_entry.get()
@@ -327,8 +693,23 @@ class FragranceManagerApp:
         self.populate_table(self.women_tree, "Women", query)
         self.populate_table(self.unisex_tree, "Unisex", query)
 
+    def refresh_all_tables(self):
+        self.populate_table(self.men_tree, "Men")
+        self.populate_table(self.women_tree, "Women")
+        self.populate_table(self.unisex_tree, "Unisex")
+        self.populate_customers()
+        self.populate_sales()
+        self.populate_supplies()
+        self.populate_oils()
+        if not self.selected_id or not get_fragrance_by_id(self.selected_id):
+            self.update_fragrance_viewer(None)
 
+# ---------------- RUN APP ----------------
 if __name__ == "__main__":
+    # Create the assets directory if it doesn't exist (helpful for images and logo)
+    if not os.path.exists('assets'):
+        os.makedirs('assets')
+    
     root = tk.Tk()
     app = FragranceManagerApp(root)
     root.mainloop()
