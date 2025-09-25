@@ -3,9 +3,14 @@ from contextlib import closing
 
 DB_NAME = "fragrances.db"
 
-# --- Database Setup ---
+def get_conn():
+    conn = sqlite3.connect(DB_NAME)
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+# ----------------- INIT -----------------
 def init_db():
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
         CREATE TABLE IF NOT EXISTS fragrances (
@@ -45,9 +50,9 @@ def init_db():
         )""")
         conn.commit()
 
-# --- Fragrance Operations ---
+# ----------------- FRAGRANCES -----------------
 def insert_fragrance(data):
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
         INSERT INTO fragrances
@@ -57,25 +62,25 @@ def insert_fragrance(data):
         conn.commit()
 
 def get_all_fragrances_by_gender(gender):
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT * FROM fragrances WHERE gender=? ORDER BY name", (gender,))
         return c.fetchall()
 
 def get_fragrance_by_id(f_id):
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT * FROM fragrances WHERE id=?", (f_id,))
         return c.fetchone()
 
 def get_fragrance_by_name(name):
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT * FROM fragrances WHERE name=?", (name,))
         return c.fetchone()
 
 def update_fragrance(f_id, data):
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
         UPDATE fragrances
@@ -85,38 +90,38 @@ def update_fragrance(f_id, data):
         conn.commit()
 
 def update_fragrance_quantity(f_id, qty):
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("UPDATE fragrances SET quantity=? WHERE id=?", (qty, f_id))
         conn.commit()
 
 def delete_fragrance(f_id):
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("DELETE FROM fragrances WHERE id=?", (f_id,))
         conn.commit()
 
-# --- Customer Operations ---
+# ----------------- CUSTOMERS -----------------
 def insert_customer(data):
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("INSERT INTO customers (name,email,phone,city,reference) VALUES (?,?,?,?,?)", data)
         conn.commit()
 
 def get_all_customers():
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT * FROM customers ORDER BY name")
         return c.fetchall()
 
 def get_customer_by_id(c_id):
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("SELECT * FROM customers WHERE id=?", (c_id,))
         return c.fetchone()
 
 def update_customer(c_id, data):
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
         UPDATE customers
@@ -126,14 +131,14 @@ def update_customer(c_id, data):
         conn.commit()
 
 def delete_customer(c_id):
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("DELETE FROM customers WHERE id=?", (c_id,))
         conn.commit()
 
-# --- Sales Operations ---
+# ----------------- SALES -----------------
 def insert_sale(data):
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
         INSERT INTO sales
@@ -143,7 +148,7 @@ def insert_sale(data):
         conn.commit()
 
 def get_all_sales():
-    with sqlite3.connect(DB_NAME) as conn:
+    with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
         SELECT s.id, f.name, c.name, s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date
@@ -154,5 +159,5 @@ def get_all_sales():
         """)
         return c.fetchall()
 
-# --- Initialize DB ---
+# ----------------- INIT DB -----------------
 init_db()
