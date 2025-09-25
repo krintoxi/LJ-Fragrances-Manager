@@ -10,7 +10,7 @@ UNIT_COST = 5.0
 SALE_PRICE = 25.0
 IMAGE_DIR = "assets/images/" 
 VIEWER_IMAGE_SIZE = (180, 180) 
-LOGO_PATH = "assets/logo.png" # Assuming your logo is here
+LOGO_PATH = "assets/logo.png"
 
 # ---------------- APP CLASS ----------------
 class FragranceManagerApp:
@@ -25,7 +25,7 @@ class FragranceManagerApp:
         self.image_cache = {}
         self.selected_image_path = None
         self.current_fragrance_image = None
-        self.logo_photo = None # Reference to prevent garbage collection
+        self.logo_photo = None
         
         init_db() 
 
@@ -49,15 +49,15 @@ class FragranceManagerApp:
         top_frame = ttk.Frame(main_frame)
         top_frame.pack(fill="x", pady=5)
         
-        # ---------------- LOGO PLACEMENT ----------------
+        # LOGO PLACEMENT
         self.load_logo(top_frame)
         
         # LEFT SIDE: Search
-        search_container = ttk.Frame(top_frame) # New container for logo + search
+        search_container = ttk.Frame(top_frame)
         search_container.pack(side="left", padx=5)
 
         search_frame = ttk.Frame(search_container)
-        search_frame.pack(side="top", anchor="w", pady=(10, 0)) # Positioned below logo
+        search_frame.pack(side="top", anchor="w", pady=(10, 0))
 
         ttk.Label(search_frame, text="Search Fragrance:", font=('Arial', 10, 'bold')).pack(side="left", padx=5)
         self.search_entry = ttk.Entry(search_frame, width=30)
@@ -109,7 +109,6 @@ class FragranceManagerApp:
         """Loads and places the logo image."""
         if os.path.exists(LOGO_PATH):
             try:
-                # Load, resize (e.g., 100x50), and store the image reference
                 img = Image.open(LOGO_PATH).resize((250, 200)) 
                 self.logo_photo = ImageTk.PhotoImage(img)
                 
@@ -118,23 +117,21 @@ class FragranceManagerApp:
                 
             except Exception as e:
                 print(f"Error loading logo: {e}")
-                # Fallback text if image fails to load
                 ttk.Label(parent_frame, text="LJ Fragrances", font=('Arial', 18, 'bold')).pack(side="left", padx=20, anchor="n")
         else:
-            # Fallback text if logo file is missing
             ttk.Label(parent_frame, text="LJ Fragrances", font=('Arial', 18, 'bold')).pack(side="left", padx=20, anchor="n")
 
-    # ---------------- TAB-SPECIFIC LAYOUTS (No functional change) ----------------
+    # ---------------- TAB-SPECIFIC LAYOUTS (FIX APPLIED HERE) ----------------
     def setup_fragrance_tab(self, parent, gender):
         # 1. Container for Table
         table_frame = ttk.Frame(parent)
         table_frame.pack(fill="both", expand=True, padx=5, pady=5)
         
-        # Table setup
+        # Table setup (REMOVED: show="tree headings" and the #0 column configuration)
         columns = ("Name", "Inspired By", "Unit Cost", "Sale Price", "Quantity", "Total Cost", "Retail Value", "Gender")
-        tree = ttk.Treeview(table_frame, columns=columns, show="tree headings", height=20)
-        tree.heading("#0", text="Thumbnail")
-        tree.column("#0", width=70, anchor="center")
+        tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=20) # Changed show="tree headings" to show="headings"
+
+        # No tree.heading("#0", ...) or tree.column("#0", ...) needed anymore
 
         for col in columns:
             tree.heading(col, text=col)
@@ -163,7 +160,6 @@ class FragranceManagerApp:
         table_frame = ttk.Frame(parent)
         table_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Table setup
         columns = ("ID", "Name", "Email", "Phone", "City", "Reference")
         tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         for col in columns:
@@ -177,7 +173,6 @@ class FragranceManagerApp:
         tree.bind("<<TreeviewSelect>>", self.on_customer_select)
         self.populate_customers()
 
-        # Tab-Specific Buttons
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill="x", pady=5, padx=5)
         ttk.Button(btn_frame, text="➕ Add Customer", command=self.add_customer, style='Modern.TButton').pack(side="left", padx=5)
@@ -188,7 +183,6 @@ class FragranceManagerApp:
         table_frame = ttk.Frame(parent)
         table_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Table setup
         columns = ("ID", "Fragrance", "Customer", "Qty Sold", "Unit Cost", "Sale Price", "Revenue", "Profit", "Date")
         tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         for col in columns:
@@ -201,13 +195,11 @@ class FragranceManagerApp:
         self.sales_tree = tree
         self.populate_sales()
         
-        # No CRUD buttons needed for Sales, as sales are recorded from the Fragrance tab
 
     def setup_supplies_tab(self, parent):
         table_frame = ttk.Frame(parent)
         table_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Table setup
         columns = ("ID", "Name", "Price", "Purchase Link", "Quantity")
         tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         for col in columns:
@@ -221,7 +213,6 @@ class FragranceManagerApp:
         tree.bind("<<TreeviewSelect>>", self.on_supply_select)
         self.populate_supplies()
         
-        # Tab-Specific Buttons
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill="x", pady=5, padx=5)
         ttk.Button(btn_frame, text="➕ Add Supply", command=self.add_supply, style='Modern.TButton').pack(side="left", padx=5)
@@ -232,7 +223,6 @@ class FragranceManagerApp:
         table_frame = ttk.Frame(parent)
         table_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Table setup
         columns = ("ID", "Name", "Size(ml)", "Price", "Purchase Link", "Quantity")
         tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         for col in columns:
@@ -246,14 +236,13 @@ class FragranceManagerApp:
         tree.bind("<<TreeviewSelect>>", self.on_oil_select)
         self.populate_oils()
 
-        # Tab-Specific Buttons
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill="x", pady=5, padx=5)
         ttk.Button(btn_frame, text="➕ Add Oil", command=self.add_oil, style='Modern.TButton').pack(side="left", padx=5)
         ttk.Button(btn_frame, text="✏️ Edit Oil", command=self.edit_oil, style='Modern.TButton').pack(side="left", padx=5)
         ttk.Button(btn_frame, text="🗑️ Delete Oil", command=self.delete_oil, style='Modern.TButton').pack(side="left", padx=5)
         
-    # ---------------- POPULATE (No functional change) ----------------
+    # ---------------- POPULATE (FIX APPLIED HERE) ----------------
     def populate_table(self, tree, gender, query=None):
         for row in tree.get_children():
             tree.delete(row)
@@ -274,21 +263,23 @@ class FragranceManagerApp:
             total_cost = unit_cost * quantity
             retail_value = sale_price * quantity
 
-            photo = None
-            if f[9] and os.path.exists(f[9]):
-                try:
-                    img = Image.open(f[9]).resize((50,50))
-                    photo = ImageTk.PhotoImage(img)
-                    self.image_cache[str(f[0])] = photo
-                except:
-                    photo = None
+            # REMOVED thumbnail generation logic, but kept image check for selection logic (though no longer used in tree)
+            # photo = None
+            # if f[9] and os.path.exists(f[9]):
+            #     try:
+            #         img = Image.open(f[9]).resize((50,50))
+            #         photo = ImageTk.PhotoImage(img)
+            #         self.image_cache[str(f[0])] = photo
+            #     except:
+            #         photo = None
 
             tags = ()
             if quantity < 5:
                 tags = ("low_stock",)
+            
             tree.insert("", "end",
                         iid=str(f[0]),
-                        image=photo if photo else "",
+                        # REMOVED image=photo if photo else ""
                         values=(str(f[1] or ""),
                                 str(f[7] or ""),
                                 f"{unit_cost:.2f}",
@@ -328,37 +319,7 @@ class FragranceManagerApp:
     # ---------------- PREFILL (No functional change) ----------------
     def prefill_fragrances(self):
         prefill_list = [
-            # MEN'S HOMAGES
-            ("LJ Apex", "Dominant, smoky, legendary", "Men", "Aromatic", UNIT_COST, SALE_PRICE, "Creed Aventus Absolute", 10, ""),
-            ("LJ Alpha X", "Bold, fruity, unstoppable", "Men", "Fruity", UNIT_COST, SALE_PRICE, "Creed Aventus", 10, ""),
-            ("LJ Midnight Phantom", "Dark, elegant, powerful", "Men", "Woody", UNIT_COST, SALE_PRICE, "Bleu de Chanel Parfum", 10, ""),
-            ("LJ Savage Apex", "Raw, spicy, untamed", "Men", "Spicy", UNIT_COST, SALE_PRICE, "Dior Sauvage Elixir", 10, ""),
-            ("LJ Ocean Prime", "Fresh, aquatic, eternal", "Men", "Aquatic", UNIT_COST, SALE_PRICE, "Giorgio Armani Acqua di Gio", 10, ""),
-            ("LJ Titan Code", "Magnetic, daring, timeless", "Men", "Aromatic", UNIT_COST, SALE_PRICE, "Jean Paul Gaultier", 10, ""),
-            ("LJ Inferno Blast", "Fiery, bold, intoxicating", "Men", "Spicy", UNIT_COST, SALE_PRICE, "Viktor & Rolf Spicebomb Extreme", 10, ""),
-            ("LJ Gold Dominion", "Opulent, sweet, high-status", "Men", "Sweet", UNIT_COST, SALE_PRICE, "Paco Rabanne 1 Million", 10, ""),
-            ("LJ Arctic Storm", "Crisp, fresh, exhilarating", "Men", "Fresh", UNIT_COST, SALE_PRICE, "Dolce & Gabbana Light Blue", 10, ""),
-            ("LJ Voltage", "Electrifying, mysterious, addictive", "Men", "Woody", UNIT_COST, SALE_PRICE, "Carolina Herrera Bad Boy", 10, ""),
-            ("LJ Blackout X", "Dark, spicy, dangerously smooth", "Men", "Spicy", UNIT_COST, SALE_PRICE, "Azzaro The Most Wanted", 10, ""),
-            ("LJ Eros Fury", "Explosive, citrusy, high-voltage", "Men", "Citrus", UNIT_COST, SALE_PRICE, "Versace Eros Energy", 10, ""),
-            ("LJ Eros Inferno", "Sweet, seductive, legendary", "Men", "Sweet", UNIT_COST, SALE_PRICE, "Versace Eros", 10, ""),
-            ("LJ Obsidian Woods", "Smoky, woody, enigmatic", "Men", "Woody", UNIT_COST, SALE_PRICE, "Le Labo Santal 33", 10, ""),
-            ("LJ Shadow Diamond", "Dark, luxurious, mysterious", "Men", "Woody", UNIT_COST, SALE_PRICE, "Armani Black Carat Diamonds", 10, ""),
-            ("LJ Silver Stratos", "Icy, fresh, unstoppable", "Men", "Fresh", UNIT_COST, SALE_PRICE, "Creed Silver Mountain Water", 10, ""),
-            ("LJ Monarch", "Rich, warm, effortlessly royal", "Men", "Warm", UNIT_COST, SALE_PRICE, "Valentino Uomo", 10, ""),
-            ("LJ Desert Mirage", "Amber, warm, hypnotic", "Men", "Amber", UNIT_COST, SALE_PRICE, "Al-Rehab Golden Sand", 10, ""),
-            ("LJ Elixir Prime", "Aromatic, modern, high-class", "Men", "Aromatic", UNIT_COST, SALE_PRICE, "YSL Y Elixir", 10, ""),
-            ("LJ Driftwood Noir", "Exotic, rugged, free-spirited", "Men", "Woody", UNIT_COST, SALE_PRICE, "Caribbean Driftwood", 10, ""),
-            
-            # WOMEN'S HOMAGES
-            ("LJ Celestial 540", "Ethereal, luminous, addictive", "Women", "Gourmand", UNIT_COST, SALE_PRICE, "Maison Francis Kurkdjian Baccarat Rouge 540", 10, ""),
-            ("LJ Opulent Chic", "Timeless, elegant, high-class", "Women", "Chypre", UNIT_COST, SALE_PRICE, "Chanel Coco Mademoiselle", 10, ""),
-            ("LJ Femme Fatalis", "Mysterious, bold, dangerously sexy", "Women", "Oriental", UNIT_COST, SALE_PRICE, "Carolina Herrera Good Girl", 10, ""),
-            ("LJ Sugar Rush", "Sweet, playful, irresistibly fun", "Women", "Gourmand", UNIT_COST, SALE_PRICE, "Pink Sugar", 10, ""),
-            ("LJ Velvet Ember", "Lush, warm, seductive", "Women", "Sweet", UNIT_COST, SALE_PRICE, "Prada Candy", 10, ""),
-            ("LJ Empress Gold", "Fierce, floral, unstoppable", "Women", "Floral", UNIT_COST, SALE_PRICE, "YSL Libre", 10, ""),
-            ("LJ Moonlight Rouge", "Luminous, alluring, enchanting", "Women", "Oriental", UNIT_COST, SALE_PRICE, "Jimmy Choo I Want Choo", 10, ""),
-            ("LJ Solar Essence", "Silky, creamy, golden warmth", "Women", "Warm", UNIT_COST, SALE_PRICE, "Mango Butter", 10, "")
+
         ]
         
         for f in prefill_list:
@@ -706,7 +667,6 @@ class FragranceManagerApp:
 
 # ---------------- RUN APP ----------------
 if __name__ == "__main__":
-    # Create the assets directory if it doesn't exist (helpful for images and logo)
     if not os.path.exists('assets'):
         os.makedirs('assets')
     
