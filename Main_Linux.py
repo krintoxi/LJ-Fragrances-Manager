@@ -1011,9 +1011,24 @@ class FragranceManagerApp:
         if not self.oils_tree: return
         for row in self.oils_tree.get_children(): self.oils_tree.delete(row)
         oils = get_all_oils()
+
+        # FIX: Helper function to safely format numeric data that might be None
+        def safe_float_format(value):
+            if value is None or str(value).strip() == '':
+                return "0.00"
+            try:
+                return f"{float(value):.2f}"
+            except (ValueError, TypeError):
+                return "0.00"
+        
         # Oils DB structure: (id, name, size, price, purchase_link, quantity)
         for o in oils:
-            self.oils_tree.insert("", "end", values=(o[0], o[1], f"{o[2]:.2f}", f"{o[3]:.2f}", o[4], o[5]))
+            # Safely format size (o[2]) and price (o[3])
+            size_formatted = safe_float_format(o[2])
+            price_formatted = safe_float_format(o[3])
+            
+            self.oils_tree.insert("", "end", 
+                                 values=(o[0], o[1], size_formatted, price_formatted, o[4], o[5]))
             
     def open_oil_form(self, edit=False):
         o_data = get_oil_by_id(self.selected_oil_id) if edit and self.selected_oil_id else None

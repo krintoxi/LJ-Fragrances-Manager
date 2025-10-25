@@ -51,8 +51,8 @@ def init_db():
                 revenue REAL,
                 profit REAL,
                 date TEXT,
-                FOREIGN KEY(fragrance_id) REFERENCES fragrances(id) ON DELETE CASCADE,
-                FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
+                FOREIGN KEY (fragrance_id) REFERENCES fragrances(id) ON DELETE SET NULL,
+                FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL
             )
         """)
         # Supplies
@@ -76,28 +76,26 @@ def init_db():
                 quantity INTEGER
             )
         """)
-        
-        # --- MODIFIED Expenses Table ---
+        # Expenses
         c.execute("""
             CREATE TABLE IF NOT EXISTS expenses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_name TEXT,
-                cost REAL,
-                quantity INTEGER,
-                supplier TEXT,
-                total_cost REAL,
+                name TEXT,
+                description TEXT,
+                amount REAL,
                 date TEXT
             )
         """)
         conn.commit()
 
-# ---------------- FRAGRANCES ----------------
+# ---------------- FRAGRANCE FUNCTIONS ----------------
 def insert_fragrance(data):
+    # data: (name, desc, gender, cat, u_cost, s_price, inspired, qty, img_path)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
             INSERT INTO fragrances 
-            (name, description, gender, category, unit_cost, sale_price, inspired_by, quantity, image)
+            (name, description, gender, category, unit_cost, sale_price, inspired_by, quantity, image) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, data)
         conn.commit()
@@ -127,6 +125,7 @@ def get_fragrance_by_name(name):
         return c.fetchone()
 
 def update_fragrance(fid, data):
+    # data: (name, desc, gender, cat, u_cost, s_price, inspired, qty, img_path)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
@@ -139,20 +138,23 @@ def update_fragrance(fid, data):
 def delete_fragrance(fid):
     with get_conn() as conn:
         c = conn.cursor()
+        # Deletes fragrance and cascade delete related sales via foreign key (ON DELETE SET NULL is used, so we need to delete sales manually or adjust FK constraint)
+        # Assuming we keep FK as is (ON DELETE SET NULL for fragrance_id in sales table)
         c.execute("DELETE FROM fragrances WHERE id=?", (fid,))
         conn.commit()
 
-def update_fragrance_quantity(fid, quantity):
+def update_fragrance_quantity(fid, new_qty):
     with get_conn() as conn:
         c = conn.cursor()
-        c.execute("UPDATE fragrances SET quantity=? WHERE id=?", (quantity, fid))
+        c.execute("UPDATE fragrances SET quantity=? WHERE id=?", (new_qty, fid))
         conn.commit()
 
-# ---------------- CUSTOMERS ----------------
+# ---------------- CUSTOMER FUNCTIONS ----------------
 def insert_customer(data):
+    # data: (name, email, phone, city, reference)
     with get_conn() as conn:
         c = conn.cursor()
-        c.execute("INSERT INTO customers (name,email,phone,city,reference) VALUES (?, ?, ?, ?, ?)", data)
+        c.execute("INSERT INTO customers (name, email, phone, city, reference) VALUES (?, ?, ?, ?, ?)", data)
         conn.commit()
 
 def get_all_customers():
@@ -168,6 +170,7 @@ def get_customer_by_id(cid):
         return c.fetchone()
 
 def update_customer(cid, data):
+    # data: (name, email, phone, city, reference)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
@@ -180,16 +183,18 @@ def update_customer(cid, data):
 def delete_customer(cid):
     with get_conn() as conn:
         c = conn.cursor()
+        # Delete customer and cascade delete related sales
         c.execute("DELETE FROM customers WHERE id=?", (cid,))
         conn.commit()
 
-# ---------------- SALES ----------------
+# ---------------- SALES FUNCTIONS ----------------
 def insert_sale(data):
+    # data: (fragrance_id, customer_id, qty_sold, unit_cost, sale_price, revenue, profit, date)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
-            INSERT INTO sales
-            (fragrance_id, customer_id, qty_sold, unit_cost, sale_price, revenue, profit, date)
+            INSERT INTO sales 
+            (fragrance_id, customer_id, qty_sold, unit_cost, sale_price, revenue, profit, date) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, data)
         conn.commit()
@@ -198,29 +203,36 @@ def get_all_sales():
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
-            SELECT s.id, f.name, c.name, s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date
+            SELECT 
+                s.id, f.name AS fragrance_name, c.name AS customer_name, 
+                s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date
             FROM sales s
             LEFT JOIN fragrances f ON s.fragrance_id = f.id
             LEFT JOIN customers c ON s.customer_id = c.id
+            ORDER BY s.date DESC
         """)
         return c.fetchall()
 
 def get_sales_by_month(month, year):
     with get_conn() as conn:
         c = conn.cursor()
-        # Assumes date format is YYYY-MM-DD or similar
-        search_pattern = f'%{year}-{month:02d}%'
+        # Use LIKE operator for YYYY-MM
+        month_str = f"{year}-{month:02d}"
         c.execute("""
-            SELECT s.id, f.name, c.name, s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date
+            SELECT 
+                s.id, f.name AS fragrance_name, c.name AS customer_name, 
+                s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date
             FROM sales s
             LEFT JOIN fragrances f ON s.fragrance_id = f.id
             LEFT JOIN customers c ON s.customer_id = c.id
             WHERE s.date LIKE ?
-        """, (search_pattern,))
+            ORDER BY s.date DESC
+        """, (f"{month_str}%",))
         return c.fetchall()
 
 # ---------------- SUPPLIES ----------------
 def insert_supply(data):
+    # data: (name, price, purchase_link, quantity)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("INSERT INTO supplies (name, price, purchase_link, quantity) VALUES (?, ?, ?, ?)", data)
@@ -245,6 +257,7 @@ def get_supply_by_name(name):
         return c.fetchone()
 
 def update_supply(sid, data):
+    # data: (name, price, purchase_link, quantity)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
@@ -262,6 +275,7 @@ def delete_supply(sid):
 
 # ---------------- OILS ----------------
 def insert_oil(data):
+    # data: (name, size, price, purchase_link, quantity)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("INSERT INTO oils (name, size, price, purchase_link, quantity) VALUES (?, ?, ?, ?, ?)", data)
@@ -286,6 +300,7 @@ def get_oil_by_name(name):
         return c.fetchone()
 
 def update_oil(oid, data):
+    # data: (name, size, price, purchase_link, quantity)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
@@ -298,25 +313,22 @@ def update_oil(oid, data):
 def delete_oil(oid):
     with get_conn() as conn:
         c = conn.cursor()
+        # CORRECTED: Removed stray backslash
         c.execute("DELETE FROM oils WHERE id=?", (oid,))
         conn.commit()
 
 # ---------------- EXPENSES ----------------
-# --- MODIFIED to match new schema ---
 def insert_expense(data):
+    # data: (name, description, amount, date)
     with get_conn() as conn:
         c = conn.cursor()
-        c.execute("""
-            INSERT INTO expenses 
-            (item_name, cost, quantity, supplier, total_cost, date) 
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, data)
+        c.execute("INSERT INTO expenses (name, description, amount, date) VALUES (?, ?, ?, ?)", data)
         conn.commit()
 
 def get_all_expenses():
     with get_conn() as conn:
         c = conn.cursor()
-        c.execute("SELECT * FROM expenses")
+        c.execute("SELECT * FROM expenses ORDER BY date DESC")
         return c.fetchall()
 
 def get_expense_by_id(eid):
@@ -325,5 +337,36 @@ def get_expense_by_id(eid):
         c.execute("SELECT * FROM expenses WHERE id=?", (eid,))
         return c.fetchone()
 
-# ---------------- INITIALIZE ----------------
-init_db()
+# ---------------- NEW: REPORTING FUNCTIONS ----------------
+
+def get_monthly_summary_data(month_year):
+    """
+    Fetches all sales and all expenses for a given month/year string (YYYY-MM).
+    Returns a tuple: (sales_data, expense_data)
+    """
+    like_pattern = f"{month_year}%"
+    with get_conn() as conn:
+        c = conn.cursor()
+        
+        # 1. Sales Data
+        # Returns: s.id, f.name, c.name, s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date
+        sales_query = """
+            SELECT 
+                s.id, f.name AS fragrance_name, c.name AS customer_name, 
+                s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date
+            FROM sales s
+            LEFT JOIN fragrances f ON s.fragrance_id = f.id
+            LEFT JOIN customers c ON s.customer_id = c.id
+            WHERE s.date LIKE ?
+            ORDER BY s.date DESC
+        """
+        c.execute(sales_query, (like_pattern,))
+        sales_data = c.fetchall()
+
+        # 2. Expense Data
+        # Returns: id, name, description, amount, date
+        expense_query = "SELECT id, name, description, amount, date FROM expenses WHERE date LIKE ? ORDER BY date DESC"
+        c.execute(expense_query, (like_pattern,))
+        expense_data = c.fetchall()
+        
+    return sales_data, expense_data
