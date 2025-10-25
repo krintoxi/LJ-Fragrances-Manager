@@ -76,6 +76,19 @@ def init_db():
                 quantity INTEGER
             )
         """)
+        
+        # --- MODIFIED Expenses Table ---
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS expenses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                item_name TEXT,
+                cost REAL,
+                quantity INTEGER,
+                supplier TEXT,
+                total_cost REAL,
+                date TEXT
+            )
+        """)
         conn.commit()
 
 # ---------------- FRAGRANCES ----------------
@@ -88,6 +101,12 @@ def insert_fragrance(data):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, data)
         conn.commit()
+
+def get_all_fragrances():
+    with get_conn() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM fragrances")
+        return c.fetchall()
 
 def get_all_fragrances_by_gender(gender):
     with get_conn() as conn:
@@ -186,6 +205,20 @@ def get_all_sales():
         """)
         return c.fetchall()
 
+def get_sales_by_month(month, year):
+    with get_conn() as conn:
+        c = conn.cursor()
+        # Assumes date format is YYYY-MM-DD or similar
+        search_pattern = f'%{year}-{month:02d}%'
+        c.execute("""
+            SELECT s.id, f.name, c.name, s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date
+            FROM sales s
+            LEFT JOIN fragrances f ON s.fragrance_id = f.id
+            LEFT JOIN customers c ON s.customer_id = c.id
+            WHERE s.date LIKE ?
+        """, (search_pattern,))
+        return c.fetchall()
+
 # ---------------- SUPPLIES ----------------
 def insert_supply(data):
     with get_conn() as conn:
@@ -267,6 +300,30 @@ def delete_oil(oid):
         c = conn.cursor()
         c.execute("DELETE FROM oils WHERE id=?", (oid,))
         conn.commit()
+
+# ---------------- EXPENSES ----------------
+# --- MODIFIED to match new schema ---
+def insert_expense(data):
+    with get_conn() as conn:
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO expenses 
+            (item_name, cost, quantity, supplier, total_cost, date) 
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, data)
+        conn.commit()
+
+def get_all_expenses():
+    with get_conn() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM expenses")
+        return c.fetchall()
+
+def get_expense_by_id(eid):
+    with get_conn() as conn:
+        c = conn.cursor()
+        c.execute("SELECT * FROM expenses WHERE id=?", (eid,))
+        return c.fetchone()
 
 # ---------------- INITIALIZE ----------------
 init_db()
