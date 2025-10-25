@@ -9,7 +9,7 @@ def get_conn():
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
-# ---------------- SETUP (MODIFIED) ----------------
+# ---------------- SETUP ----------------
 def init_db():
     with get_conn() as conn:
         c = conn.cursor()
@@ -51,8 +51,8 @@ def init_db():
                 revenue REAL,
                 profit REAL,
                 date TEXT,
-                FOREIGN KEY (fragrance_id) REFERENCES fragrances(id) ON DELETE SET NULL,
-                FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL
+                FOREIGN KEY(fragrance_id) REFERENCES fragrances(id) ON DELETE CASCADE,
+                FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE
             )
         """)
         # Supplies
@@ -76,57 +76,18 @@ def init_db():
                 quantity INTEGER
             )
         """)
-        
-        # --- MODIFIED: Expenses Table ---
-        # This will create the table with the new columns IF it doesn't exist
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS expenses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT,
-                description TEXT,  -- Retained for old data/future use
-                amount REAL,       -- This is the TOTAL cost
-                date TEXT,
-                unit_cost REAL,    -- NEW
-                quantity INTEGER,  -- NEW
-                supplier TEXT      -- NEW
-            )
-        """)
-        
-        # --- DATABASE MIGRATION LOGIC (Preserve Existing Data) ---
-        # This safely adds the new columns to your existing .db file
-        try:
-            c.execute("ALTER TABLE expenses ADD COLUMN unit_cost REAL")
-        except sqlite3.OperationalError:
-            pass # Column already exists
-        try:
-            c.execute("ALTER TABLE expenses ADD COLUMN quantity INTEGER")
-        except sqlite3.OperationalError:
-            pass # Column already exists
-        try:
-            c.execute("ALTER TABLE expenses ADD COLUMN supplier TEXT")
-        except sqlite3.OperationalError:
-            pass # Column already exists
-        # ---------------------------------------------------------
-
         conn.commit()
 
-# ---------------- FRAGRANCE FUNCTIONS ----------------
+# ---------------- FRAGRANCES ----------------
 def insert_fragrance(data):
-    # data: (name, desc, gender, cat, u_cost, s_price, inspired, qty, img_path)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
             INSERT INTO fragrances 
-            (name, description, gender, category, unit_cost, sale_price, inspired_by, quantity, image) 
+            (name, description, gender, category, unit_cost, sale_price, inspired_by, quantity, image)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, data)
         conn.commit()
-
-def get_all_fragrances():
-    with get_conn() as conn:
-        c = conn.cursor()
-        c.execute("SELECT * FROM fragrances")
-        return c.fetchall()
 
 def get_all_fragrances_by_gender(gender):
     with get_conn() as conn:
@@ -147,7 +108,6 @@ def get_fragrance_by_name(name):
         return c.fetchone()
 
 def update_fragrance(fid, data):
-    # data: (name, desc, gender, cat, u_cost, s_price, inspired, qty, img_path)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
@@ -163,18 +123,17 @@ def delete_fragrance(fid):
         c.execute("DELETE FROM fragrances WHERE id=?", (fid,))
         conn.commit()
 
-def update_fragrance_quantity(fid, new_qty):
+def update_fragrance_quantity(fid, quantity):
     with get_conn() as conn:
         c = conn.cursor()
-        c.execute("UPDATE fragrances SET quantity=? WHERE id=?", (new_qty, fid))
+        c.execute("UPDATE fragrances SET quantity=? WHERE id=?", (quantity, fid))
         conn.commit()
 
-# ---------------- CUSTOMER FUNCTIONS ----------------
+# ---------------- CUSTOMERS ----------------
 def insert_customer(data):
-    # data: (name, email, phone, city, reference)
     with get_conn() as conn:
         c = conn.cursor()
-        c.execute("INSERT INTO customers (name, email, phone, city, reference) VALUES (?, ?, ?, ?, ?)", data)
+        c.execute("INSERT INTO customers (name,email,phone,city,reference) VALUES (?, ?, ?, ?, ?)", data)
         conn.commit()
 
 def get_all_customers():
@@ -190,7 +149,6 @@ def get_customer_by_id(cid):
         return c.fetchone()
 
 def update_customer(cid, data):
-    # data: (name, email, phone, city, reference)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
@@ -206,14 +164,13 @@ def delete_customer(cid):
         c.execute("DELETE FROM customers WHERE id=?", (cid,))
         conn.commit()
 
-# ---------------- SALES FUNCTIONS ----------------
+# ---------------- SALES ----------------
 def insert_sale(data):
-    # data: (fragrance_id, customer_id, qty_sold, unit_cost, sale_price, revenue, profit, date)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
-            INSERT INTO sales 
-            (fragrance_id, customer_id, qty_sold, unit_cost, sale_price, revenue, profit, date) 
+            INSERT INTO sales
+            (fragrance_id, customer_id, qty_sold, unit_cost, sale_price, revenue, profit, date)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, data)
         conn.commit()
@@ -222,36 +179,15 @@ def get_all_sales():
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
-            SELECT 
-                s.id, f.name AS fragrance_name, c.name AS customer_name, 
-                s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date
+            SELECT s.id, f.name, c.name, s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date
             FROM sales s
             LEFT JOIN fragrances f ON s.fragrance_id = f.id
             LEFT JOIN customers c ON s.customer_id = c.id
-            ORDER BY s.date DESC
         """)
-        return c.fetchall()
-
-def get_sales_by_month(month, year):
-    with get_conn() as conn:
-        c = conn.cursor()
-        # Use LIKE operator for YYYY-MM
-        month_str = f"{year}-{month:02d}"
-        c.execute("""
-            SELECT 
-                s.id, f.name AS fragrance_name, c.name AS customer_name, 
-                s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date
-            FROM sales s
-            LEFT JOIN fragrances f ON s.fragrance_id = f.id
-            LEFT JOIN customers c ON s.customer_id = c.id
-            WHERE s.date LIKE ?
-            ORDER BY s.date DESC
-        """, (f"{month_str}%",))
         return c.fetchall()
 
 # ---------------- SUPPLIES ----------------
 def insert_supply(data):
-    # data: (name, price, purchase_link, quantity)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("INSERT INTO supplies (name, price, purchase_link, quantity) VALUES (?, ?, ?, ?)", data)
@@ -276,7 +212,6 @@ def get_supply_by_name(name):
         return c.fetchone()
 
 def update_supply(sid, data):
-    # data: (name, price, purchase_link, quantity)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
@@ -294,7 +229,6 @@ def delete_supply(sid):
 
 # ---------------- OILS ----------------
 def insert_oil(data):
-    # data: (name, size, price, purchase_link, quantity)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("INSERT INTO oils (name, size, price, purchase_link, quantity) VALUES (?, ?, ?, ?, ?)", data)
@@ -319,7 +253,6 @@ def get_oil_by_name(name):
         return c.fetchone()
 
 def update_oil(oid, data):
-    # data: (name, size, price, purchase_link, quantity)
     with get_conn() as conn:
         c = conn.cursor()
         c.execute("""
@@ -335,62 +268,5 @@ def delete_oil(oid):
         c.execute("DELETE FROM oils WHERE id=?", (oid,))
         conn.commit()
 
-# ---------------- EXPENSES (MODIFIED) ----------------
-def insert_expense(data):
-    # MODIFIED: Data is expected to be a 6-element tuple
-    # (item_name, unit_cost, quantity, supplier, total_amount, date)
-    with get_conn() as conn:
-        c = conn.cursor()
-        # MODIFIED: Insert into the 6 new columns
-        c.execute("""
-            INSERT INTO expenses 
-            (name, unit_cost, quantity, supplier, amount, date) 
-            VALUES (?, ?, ?, ?, ?, ?)
-            """, data)
-        conn.commit()
-
-def get_all_expenses():
-    with get_conn() as conn:
-        c = conn.cursor()
-        # MODIFIED: Select all 8 columns from the migrated table
-        c.execute("SELECT id, name, description, amount, date, unit_cost, quantity, supplier FROM expenses ORDER BY date DESC")
-        return c.fetchall()
-
-def get_expense_by_id(eid):
-    with get_conn() as conn:
-        c = conn.cursor()
-        # MODIFIED: Select all 8 columns
-        c.execute("SELECT id, name, description, amount, date, unit_cost, quantity, supplier FROM expenses WHERE id=?", (eid,))
-        return c.fetchone()
-
-# ---------------- REPORTING FUNCTIONS (MODIFIED) ----------------
-
-def get_monthly_summary_data(month_year):
-    """
-    Fetches all sales and all expenses for a given month/year string (YYYY-MM).
-    Returns a tuple: (sales_data, expense_data)
-    """
-    like_pattern = f"{month_year}%"
-    with get_conn() as conn:
-        c = conn.cursor()
-        
-        # 1. Sales Data (No change)
-        sales_query = """
-            SELECT 
-                s.id, f.name AS fragrance_name, c.name AS customer_name, 
-                s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date
-            FROM sales s
-            LEFT JOIN fragrances f ON s.fragrance_id = f.id
-            LEFT JOIN customers c ON s.customer_id = c.id
-            WHERE s.date LIKE ?
-            ORDER BY s.date DESC
-        """
-        c.execute(sales_query, (like_pattern,))
-        sales_data = c.fetchall()
-
-        # 2. Expense Data (MODIFIED to select all 8 columns)
-        expense_query = "SELECT id, name, description, amount, date, unit_cost, quantity, supplier FROM expenses WHERE date LIKE ? ORDER BY date DESC"
-        c.execute(expense_query, (like_pattern,))
-        expense_data = c.fetchall()
-        
-    return sales_data, expense_data
+# ---------------- INITIALIZE ----------------
+init_db()

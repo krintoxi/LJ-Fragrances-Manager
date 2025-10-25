@@ -6,6 +6,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import datetime # Used for date handling in sales and expense logic
+import numpy as np # Added for chart bar positioning
 
 # NOTE: database.py must be present in the same directory
 from database import (
@@ -55,6 +56,9 @@ from database import (
     insert_expense,
     get_all_expenses,
     get_expense_by_id,
+    
+    # REPORTING
+    get_monthly_summary_data
 )
 
 # --- NEW STYLING CONSTANTS (MODERN LIGHT THEME) ---
@@ -96,13 +100,26 @@ class FragranceManagerApp:
         self.supplies_tree = None
         self.oils_tree = None
         self.expenses_tree = None
-        self.chart_canvas_container = None
         
-        self.month_var = tk.StringVar(value="All Months")
+        # Chart & Summary UI References
+        self.graph_frame = None # Frame to hold the chart canvas
+        self.chart_month_selector = None
+        self.summary_revenue_label = None
+        self.summary_cogs_label = None
+        self.summary_overhead_label = None
+        self.summary_profit_label = None
+        self.summary_total_stock_label = None
+        self.summary_total_value_label = None
+        self.summary_retail_value_label = None # NEW: Retail Value Label
+        
+        # StringVars for filters
+        self.expense_month_var = tk.StringVar(value="All Months") 
         self.sales_month_var = tk.StringVar(value="All Months")
-        self.total_expense_label = None
+        self.total_expense_label = None 
+        self.expense_month_filter = None 
 
-        init_db()
+        init_db() # This will now run the migration
+        
         # Ensure image directory exists
         if not os.path.exists(IMAGE_DIR):
             os.makedirs(IMAGE_DIR)
@@ -121,7 +138,7 @@ class FragranceManagerApp:
         try:
             # Attempt to clean up currency formatting if it's accidentally passed
             if isinstance(value, str):
-                value = value.replace('$', '').replace(',', '')
+                value = value.replace('$', '').replace(',', '').replace('£', '')
                 
             if is_integer:
                 result = int(value)
@@ -213,7 +230,6 @@ class FragranceManagerApp:
         tree = event.widget
         selected_item = tree.focus()
         if selected_item:
-            # FIX: selected_item IS the iid (the ID from the database)
             self.selected_id = int(selected_item) 
             self.update_fragrance_viewer(self.selected_id)
         else:
@@ -227,7 +243,7 @@ class FragranceManagerApp:
 
         name = get_fragrance_by_id(self.selected_id)[1]
         
-        if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete fragrance: {name} (ID: {self.selected_id})? This will also delete related sales records."):
+        if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete fragrance: {name} (ID: {self.selected_id})? This may affect historical sales records."):
             try:
                 delete_fragrance(self.selected_id)
                 messagebox.showinfo("Success", "Fragrance deleted successfully.")
@@ -241,7 +257,6 @@ class FragranceManagerApp:
     def load_logo(self, parent_frame):
         """Loads and displays the logo image."""
         try:
-            # Check for the logo file
             if os.path.exists(LOGO_PATH):
                 img = Image.open(LOGO_PATH)
                 img = img.resize((50, 50), Image.Resampling.LANCZOS) # Resize logo
@@ -322,7 +337,7 @@ class FragranceManagerApp:
         ttk.Button(search_frame, text="Search", command=self.search_fragrance, style='Modern.TButton').pack(side="left", padx=5)
         ttk.Button(search_frame, text="Clear", command=self.refresh_all_tables, style='Modern.TButton').pack(side="left", padx=5)
 
-        # RIGHT SIDE: Image Viewer (Stays the same, but packs next to left_panel)
+        # RIGHT SIDE: Image Viewer
         self.image_viewer_frame = ttk.LabelFrame(top_frame, text="Fragrance Details", padding="10", style='Viewer.TLabelframe')
         self.image_viewer_frame.pack(side="right", fill="y", padx=20, anchor="n")
         
@@ -342,7 +357,7 @@ class FragranceManagerApp:
         self.unisex_tab = ttk.Frame(self.tabControl)
         self.customer_tab = ttk.Frame(self.tabControl)
         self.sales_tab = ttk.Frame(self.tabControl)
-        self.supplies_tab = ttk.Frame(self.tabControl) # Corrected typo: self.suppDlies_tab -> self.supplies_tab
+        self.supplies_tab = ttk.Frame(self.tabControl)
         self.oils_tab = ttk.Frame(self.tabControl)
         self.expenses_tab = ttk.Frame(self.tabControl)
         self.chart_tab = ttk.Frame(self.tabControl)
@@ -352,7 +367,7 @@ class FragranceManagerApp:
         self.tabControl.add(self.unisex_tab, text="Unisex")
         self.tabControl.add(self.customer_tab, text="Customers")
         self.tabControl.add(self.sales_tab, text="Sales")
-        self.tabControl.add(self.supplies_tab, text="Supplies") # Corrected typo in the call
+        self.tabControl.add(self.supplies_tab, text="Supplies")
         self.tabControl.add(self.oils_tab, text="Oils")
         self.tabControl.add(self.expenses_tab, text="Expenses")
         self.tabControl.add(self.chart_tab, text="Profit Chart")
@@ -370,18 +385,13 @@ class FragranceManagerApp:
         # Bind tab change event
         self.tabControl.bind("<<NotebookTabChanged>>", self.on_tab_change)
 
-    # --- *** FIXED TAB CHANGE LOGIC *** ---
-# --- *** FIXED TAB CHANGE LOGIC (V2) *** ---
-    # --- *** FIXED TAB CHANGE LOGIC (V3) *** ---
+    # --- MODIFIED: on_tab_change ---
     def on_tab_change(self, event):
         """
         Refreshes content for the selected tab.
-        Keeps fragrance viewer visible but resets functional selection for smooth re-selection.
         """
         selected_tab_text = self.tabControl.tab(self.tabControl.select(), "text")
         
-        # 1. CRITICAL: Clear the *visual* selection from all fragrance trees.
-        # This forces the <<TreeviewSelect>> event to fire on the next click.
         if self.men_tree:
             self.men_tree.selection_set("") 
         if self.women_tree:
@@ -389,13 +399,11 @@ class FragranceManagerApp:
         if self.unisex_tree:
             self.unisex_tree.selection_set("")
 
-        # 2. Clear the *functional* selection ID when leaving a fragrance tab group.
-        # We DO NOT clear the viewer (self.update_fragrance_viewer(None)) so details persist.
         self.selected_id = None
         
-        # 3. Handle specific refreshes for the *newly selected* tab
+        # Refresh the data for the newly selected tab
         if selected_tab_text == "Profit Chart":
-            self.plot_profit_chart()
+            self.update_chart_tab() # New master function for this tab
         elif selected_tab_text == "Expenses":
             self.populate_expenses()
         elif selected_tab_text == "Sales":
@@ -414,7 +422,7 @@ class FragranceManagerApp:
              self.populate_table(self.unisex_tree, "Unisex")
 
 
-    # ---------------- FRAGRANCE TAB SETUP (FIXED TAG_CONFIGURE) ----------------
+    # ---------------- FRAGRANCE TAB SETUP ----------------
     def setup_fragrance_tab(self, parent, gender):
         # 1. Container for Table
         table_frame = ttk.Frame(parent)
@@ -423,9 +431,7 @@ class FragranceManagerApp:
         columns = ("ID", "Name", "Gender", "Category", "Unit Cost", "Sale Price", "Inspired By", "Quantity")
         tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
         
-        # --- FIX IMPLEMENTED: Define the custom tag directly on the Treeview widget ---
         tree.tag_configure('low_stock', background=LOW_STOCK_COLOR, foreground=BG_LIGHT)
-        # -----------------------------------------------------------------------------
         
         # Define column widths
         tree.column("ID", width=40, anchor="center")
@@ -473,7 +479,6 @@ class FragranceManagerApp:
         """Filters all fragrance treeviews based on the search entry content."""
         search_term = self.search_entry.get().strip().lower()
         
-        # Function to filter and populate a single treeview
         def filter_tree(tree, gender):
             if tree:
                 for row in tree.get_children():
@@ -486,7 +491,6 @@ class FragranceManagerApp:
             if search_term:
                 filtered_fragrances = []
                 for f in fragrances:
-                    # f is a tuple: (id, name, desc, gender, cat, u_cost, s_price, inspired, qty, img_path)
                     name = str(f[1] or "").lower()
                     desc = str(f[2] or "").lower()
                     
@@ -545,12 +549,10 @@ class FragranceManagerApp:
                 entry = ttk.Entry(form_frame, style='TEntry')
             
             entry.grid(row=i, column=1, padx=5, pady=5, sticky="ew")
-            # Indexing f_data: f_data is a tuple from DB: (id, name, desc, gender, cat, u_cost, s_price, inspired, qty, img_path)
-            if edit and f_data and i < 9: # We skip ID (index 0) in the form
+            if edit and f_data and i < 9:
                 db_index = i + 1
                 value = f_data[db_index] if db_index < len(f_data) and f_data[db_index] is not None else ""
                 
-                # Format numeric fields for display
                 if field in ["Unit Cost", "Sale Price"]:
                     try:
                         value = f"{float(value):.2f}"
@@ -567,7 +569,6 @@ class FragranceManagerApp:
 
         ttk.Button(form_frame, text="Choose Image", command=lambda: self.choose_image(entries["Image"]), style='Modern.TButton').grid(row=8, column=2, padx=5)
 
-        # --- COMPLETED SAVE FUNCTION ---
         def save():
             name = entries["Name"].get().strip()
             desc = entries["Description"].get().strip()
@@ -575,7 +576,6 @@ class FragranceManagerApp:
             category = entries["Category"].get().strip()
             inspired_by = entries["Inspired By"].get().strip()
             
-            # --- VALIDATION ---
             unit_cost = self.validate_numeric_input(entries["Unit Cost"].get(), "Unit Cost", is_integer=False)
             sale_price = self.validate_numeric_input(entries["Sale Price"].get(), "Sale Price", is_integer=False)
             quantity = self.validate_numeric_input(entries["Quantity"].get(), "Quantity", is_integer=True)
@@ -585,7 +585,6 @@ class FragranceManagerApp:
                 messagebox.showerror("Input Error", "Name, Gender, and valid numbers for cost/quantity are required.")
                 return
 
-            # Fragrance data tuple (matching the DB structure, excluding ID)
             f_data = (name, desc, gender, category, unit_cost, sale_price, inspired_by, quantity, image_path)
             
             if edit and self.selected_id:
@@ -599,11 +598,9 @@ class FragranceManagerApp:
             self.update_fragrance_viewer(self.selected_id if edit else None)
             form.destroy()
             
-        # Add the SAVE button call back to the form frame
         ttk.Button(form_frame, text=("Save Changes" if edit else "Add Fragrance"), 
                    command=save, style='Primary.TButton').grid(row=9, column=1, pady=10, sticky="e")
         form_frame.grid_columnconfigure(1, weight=1)
-        # --- END COMPLETED SAVE FUNCTION ---
 
     # ---------------- CUSTOMER LOGIC ----------------
     def on_customer_select(self, event):
@@ -611,14 +608,12 @@ class FragranceManagerApp:
         tree = event.widget
         selected_item = tree.focus()
         if selected_item:
-            # Assumes ID is the first value in the row
             self.selected_customer_id = int(tree.item(selected_item)['values'][0])
         else:
             self.selected_customer_id = None
             
     def setup_customer_tab(self, parent):
         """Sets up the UI for the Customers tab."""
-        # 1. Container for Table
         table_frame = ttk.Frame(parent)
         table_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
@@ -642,7 +637,6 @@ class FragranceManagerApp:
         self.customer_tree.configure(yscroll=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         
-        # 2. Button Frame
         btn_frame = ttk.Frame(parent)
         btn_frame.pack(fill="x", pady=5)
         
@@ -659,7 +653,6 @@ class FragranceManagerApp:
             self.customer_tree.delete(row)
             
         customers = get_all_customers()
-        # Customer DB structure: (id, name, email, phone, city, reference)
         for c in customers:
             self.customer_tree.insert("", "end", iid=str(c[0]), values=c)
             
@@ -686,7 +679,6 @@ class FragranceManagerApp:
             entry = ttk.Entry(form_frame, style='TEntry')
             entry.grid(row=i, column=1, padx=5, pady=5, sticky="ew")
             
-            # c_data is (id, name, email, phone, city, reference)
             if edit and c_data and i + 1 < len(c_data):
                 entry.insert(0, c_data[i + 1] if c_data[i + 1] is not None else "")
             entries[field] = entry
@@ -721,7 +713,7 @@ class FragranceManagerApp:
 
         name = get_customer_by_id(self.selected_customer_id)[1]
         
-        if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete customer: {name} (ID: {self.selected_customer_id})? This will also delete related sales records."):
+        if messagebox.askyesno("Confirm Delete", f"Are you sure you want to delete customer: {name} (ID: {self.selected_customer_id})? This may affect historical sales records."):
             try:
                 delete_customer(self.selected_customer_id)
                 messagebox.showinfo("Success", "Customer deleted successfully.")
@@ -771,7 +763,6 @@ class FragranceManagerApp:
                 messagebox.showwarning("Error", "Select customer")
                 return
             
-            # --- VALIDATION INTEGRATION ---
             qty = self.validate_numeric_input(qty_entry.get(), "Quantity", is_integer=True)
             if qty is None: return
             if qty <= 0:
@@ -782,7 +773,6 @@ class FragranceManagerApp:
             if qty > current_qty:
                 messagebox.showerror("Error", f"Not enough stock. Available: {current_qty}")
                 return
-            # ------------------------------
             
             customer_id = int(customer_var.get().split("ID:")[1].replace(")", ""))
             unit_cost = float(fragrance[5])
@@ -791,9 +781,7 @@ class FragranceManagerApp:
             profit = (sale_price - unit_cost) * qty
             date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            # Insert sale record
             insert_sale((self.selected_id, customer_id, qty, unit_cost, sale_price, revenue, profit, date))
-            # Update fragrance stock
             update_fragrance_quantity(self.selected_id, current_qty - qty)
             
             self.populate_sales()
@@ -806,7 +794,6 @@ class FragranceManagerApp:
         
     def setup_sales_tab(self, parent):
         """Sets up the UI for the Sales tab."""
-        # 1. Container for Table
         table_frame = ttk.Frame(parent)
         table_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
@@ -832,7 +819,6 @@ class FragranceManagerApp:
         self.sales_tree.configure(yscroll=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         
-        # 2. Controls Frame
         controls_frame = ttk.Frame(parent)
         controls_frame.pack(fill="x", pady=5)
         
@@ -852,10 +838,8 @@ class FragranceManagerApp:
         for row in self.sales_tree.get_children():
             self.sales_tree.delete(row)
             
-        # Get all sales to determine months
         all_sales = get_all_sales()
         
-        # 1. Update Month ComboBox
         months = sorted(list(set([s[8][:7] for s in all_sales if s[8]])), reverse=True)
         months.insert(0, "All Months")
         if self.sales_month_combo:
@@ -870,14 +854,16 @@ class FragranceManagerApp:
             sales = all_sales
         else:
             try:
-                year, month = map(int, selected_month_year.split('-'))
-                sales = get_sales_by_month(month, year)
+                # The get_sales_by_month function expects (month, year) as separate args
+                year_str, month_str = selected_month_year.split('-')
+                sales = get_sales_by_month(int(month_str), int(year_str))
             except ValueError:
-                sales = [] # Handle invalid format if somehow set
+                sales = [] 
+            except Exception as e:
+                print(f"Error filtering sales: {e}")
+                sales = []
 
-        # Sales DB structure: (s.id, f.name, c.name, s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date)
         for s in sales:
-            # Format currency values
             formatted_values = (
                 s[0], s[1] or "Unknown Fragrance", s[2] or "Unknown Customer", s[3],
                 f"{s[4]:.2f}", f"{s[5]:.2f}", f"{s[6]:.2f}", f"{s[7]:.2f}", s[8]
@@ -922,7 +908,8 @@ class FragranceManagerApp:
         supplies = get_all_supplies()
         # Supply DB structure: (id, name, price, purchase_link, quantity)
         for s in supplies:
-            self.supplies_tree.insert("", "end", values=(s[0], s[1], f"{s[2]:.2f}", s[3], s[4]))
+            price_val = s[2] if s[2] is not None else 0.0
+            self.supplies_tree.insert("", "end", values=(s[0], s[1], f"{price_val:.2f}", s[3], s[4]))
             
     def open_supply_form(self, edit=False):
         s_data = get_supply_by_id(self.selected_supply_id) if edit and self.selected_supply_id else None
@@ -941,8 +928,11 @@ class FragranceManagerApp:
             entry = ttk.Entry(form_frame, style='TEntry'); entry.grid(row=i, column=1, padx=5, pady=5, sticky="ew")
             # s_data is (id, name, price, purchase_link, quantity)
             if edit and s_data and i + 1 < len(s_data):
-                value = f"{s_data[i+1]:.2f}" if field == "Price" else str(s_data[i+1])
-                entry.insert(0, value.replace("$", "") if value else "")
+                value = s_data[i+1]
+                if field == "Price":
+                    try: value = f"{float(value):.2f}"
+                    except: value = "0.00"
+                entry.insert(0, str(value) if value is not None else "")
             entries[field] = entry
 
         def save():
@@ -1012,7 +1002,6 @@ class FragranceManagerApp:
         for row in self.oils_tree.get_children(): self.oils_tree.delete(row)
         oils = get_all_oils()
 
-        # FIX: Helper function to safely format numeric data that might be None
         def safe_float_format(value):
             if value is None or str(value).strip() == '':
                 return "0.00"
@@ -1023,7 +1012,6 @@ class FragranceManagerApp:
         
         # Oils DB structure: (id, name, size, price, purchase_link, quantity)
         for o in oils:
-            # Safely format size (o[2]) and price (o[3])
             size_formatted = safe_float_format(o[2])
             price_formatted = safe_float_format(o[3])
             
@@ -1047,11 +1035,11 @@ class FragranceManagerApp:
             entry = ttk.Entry(form_frame, style='TEntry'); entry.grid(row=i, column=1, padx=5, pady=5, sticky="ew")
             # o_data is (id, name, size, price, purchase_link, quantity)
             if edit and o_data and i + 1 < len(o_data):
-                value = str(o_data[i+1])
+                value = o_data[i+1]
                 if field in ["Size (ml)", "Price"]:
                     try: value = f"{float(value):.2f}"
-                    except: pass
-                entry.insert(0, value.replace("$", "") if value else "")
+                    except: value = "0.00"
+                entry.insert(0, str(value) if value is not None else "")
             entries[field] = entry
 
         def save():
@@ -1084,7 +1072,7 @@ class FragranceManagerApp:
             messagebox.showinfo("Success", "Oil deleted.")
             self.selected_oil_id = None; self.populate_oils()
 
-    # ---------------- EXPENSE TAB SETUP AND LOGIC (MODIFIED) ----------------
+    # ---------------- EXPENSE TAB SETUP AND LOGIC ----------------
     def setup_expenses_tab(self, parent):
         # Top Frame for Monthly Summary and Add Button
         top_frame = ttk.Frame(parent)
@@ -1094,13 +1082,13 @@ class FragranceManagerApp:
         summary_frame = ttk.LabelFrame(top_frame, text="Monthly Summary", padding=10, style='Viewer.TLabelframe')
         summary_frame.pack(side="left", padx=10)
         
-        self.month_var.set("All Months") # Reset variable
+        self.expense_month_var.set("All Months") # Use the class variable
         
-        self.month_combo = ttk.Combobox(summary_frame, textvariable=self.month_var, state="readonly", width=15, style='TCombobox')
-        self.month_combo.pack(side="left", padx=5)
-        self.month_combo.bind("<<ComboboxSelected>>", self.populate_expenses)
+        self.expense_month_filter = ttk.Combobox(summary_frame, textvariable=self.expense_month_var, state="readonly", width=15, style='TCombobox')
+        self.expense_month_filter.pack(side="left", padx=5)
+        self.expense_month_filter.bind("<<ComboboxSelected>>", self.filter_expenses_by_month) 
         
-        self.total_expense_label = ttk.Label(summary_frame, text="Total Expenses: $0.00", style='Bold.TLabel', background=BG_SECONDARY)
+        self.total_expense_label = ttk.Label(summary_frame, text="Total Expenses: £0.00", style='Bold.TLabel', background=BG_SECONDARY)
         self.total_expense_label.pack(side="left", padx=15)
         
         # Add Expense Button
@@ -1112,17 +1100,17 @@ class FragranceManagerApp:
         table_frame = ttk.Frame(parent)
         table_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # --- MODIFIED Columns to match new schema ---
+        # Columns for the new 7-column display
         columns = ("ID", "Date", "Item Name", "Cost", "Quantity", "Supplier", "Total Cost")
         tree = ttk.Treeview(table_frame, columns=columns, show="headings")
         
         tree.column("ID", width=40, anchor="center")
         tree.column("Date", width=150, anchor="center")
         tree.column("Item Name", width=250)
-        tree.column("Cost", width=100, anchor="center")
+        tree.column("Cost", width=100, anchor="center")      # Unit Cost
         tree.column("Quantity", width=80, anchor="center")
         tree.column("Supplier", width=200)
-        tree.column("Total Cost", width=120, anchor="center")
+        tree.column("Total Cost", width=120, anchor="center") # Amount
 
         for col in columns:
             tree.heading(col, text=col)
@@ -1136,7 +1124,6 @@ class FragranceManagerApp:
         
         self.populate_expenses() # Initial population
 
-    # --- MODIFIED Expense Form ---
     def open_expense_form(self):
         form = tk.Toplevel(self.root)
         form.title("Record New Expense")
@@ -1158,191 +1145,377 @@ class FragranceManagerApp:
             item_name = entries["Item Name"].get().strip()
             supplier = entries["Supplier (Optional)"].get().strip()
             
-            # 1. Basic Required Field Check
             if not item_name:
                 messagebox.showerror("Input Error", "Item Name is required.")
                 return
 
-            # 2. Numeric Validation
-            cost = self.validate_numeric_input(entries["Cost (per item)"].get(), "Cost", is_integer=False)
+            cost = self.validate_numeric_input(entries["Cost (per item)"].get(), "Cost (per item)", is_integer=False)
             quantity = self.validate_numeric_input(entries["Quantity"].get(), "Quantity", is_integer=True)
             
             if cost is None or quantity is None:
-                return # Validation function already showed error
+                return 
 
             if cost <= 0 or quantity <= 0:
-                messagebox.showerror("Input Error", "Cost and Quantity must be greater than zero.")
+                messagebox.showerror("Input Error", "Cost and Quantity must be greater than zero for a new expense.")
                 return
 
-            # 3. Final Calculation and Save
-            total_cost = cost * quantity
+            total_cost = cost * quantity 
             expense_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            # DB structure: (item_name, cost, quantity, supplier, total_cost, date)
-            insert_expense((item_name, cost, quantity, supplier, total_cost, expense_date))
+            # (item_name, unit_cost, quantity, supplier, total_cost, date)
+            data_to_insert = (item_name, cost, quantity, supplier, total_cost, expense_date)
             
-            messagebox.showinfo("Success", "Expense recorded.")
-            self.populate_expenses()
-            form.destroy()
-
+            try:
+                insert_expense(data_to_insert)
+                
+                messagebox.showinfo("Success", "Expense recorded.")
+                self.populate_expenses() # Refresh table
+                form.destroy()
+            except Exception as e:
+                messagebox.showerror("Database Error", f"Could not record expense: {e}")
+                
         ttk.Button(form_frame, text="Save Expense", command=save, style='Primary.TButton').grid(row=len(fields), column=1, pady=15, sticky="e")
         form_frame.grid_columnconfigure(1, weight=1)
 
-    # --- MODIFIED to populate new table structure ---
-    def populate_expenses(self, event=None):
-        if not self.expenses_tree: return
-        for row in self.expenses_tree.get_children():
-            self.expenses_tree.delete(row)
-
-        all_expenses = get_all_expenses()
-        
-        # Expense DB structure: (id, item_name, cost, quantity, supplier, total_cost, date)
-        
-        # 1. Update Month ComboBox
-        months = sorted(list(set([e[6] for e in all_expenses if e[6]])), key=lambda x: x[:7], reverse=True)
-        # Get unique YYYY-MM
-        unique_months = sorted(list(set([m[:7] for m in months])), reverse=True)
-        unique_months.insert(0, "All Months")
-        
-        if self.month_combo:
-            current_month_selection = self.month_var.get()
-            self.month_combo['values'] = unique_months
-            if current_month_selection not in unique_months:
-                self.month_var.set("All Months")
-        
-        selected_month = self.month_var.get()
-        
-        monthly_total = 0.0
-        
-        for e in all_expenses:
-            # e: (id, item_name, cost, quantity, supplier, total_cost, date)
-            date_str = e[6]
+    def populate_expenses(self):
+        if not self.expenses_tree:
+            return
             
-            # 2. Filtering by Month
-            if selected_month != "All Months" and (not date_str or not date_str.startswith(selected_month)):
-                continue
+        for i in self.expenses_tree.get_children():
+            self.expenses_tree.delete(i)
+            
+        if not self.expense_month_filter:
+            return # Avoids error on init if filter not ready
+
+        try:
+            all_expenses = get_all_expenses()
+
+            # --- Update Month Filter ---
+            # DB fields: id[0], name[1], desc[2], amount[3], date[4], unit_cost[5], qty[6], supplier[7]
+            month_strings = [e[4][:7] for e in all_expenses if e[4]]
+            months = sorted(list(set(month_strings)), reverse=True)
+            
+            current_selection = self.expense_month_var.get()
+            self.expense_month_filter['values'] = ["All Months"] + months
+            if current_selection not in (["All Months"] + months):
+                self.expense_month_var.set("All Months")
+
+            # --- Filter Data Based on Selection ---
+            selected_month = self.expense_month_var.get()
+            if selected_month == "All Months":
+                filtered_expenses = all_expenses
+            else:
+                filtered_expenses = [e for e in all_expenses if e[4] and e[4].startswith(selected_month)]
+
+            # --- Populate the Treeview ---
+            total_expense_sum = 0
+            for expense in filtered_expenses:
+                # DB fields: id[0], name[1], desc[2], amount[3], date[4], unit_cost[5], qty[6], supplier[7]
                 
-            try:
-                total_cost_float = float(e[5]) # Index 5 is total_cost
-            except (TypeError, ValueError):
-                total_cost_float = 0.0
+                exp_id = expense[0]
+                exp_date = expense[4].split(" ")[0] if expense[4] else "N/A"
+                item_name = expense[1]
+                
+                unit_cost = f"£{expense[5]:.2f}" if expense[5] is not None else "N/A"
+                quantity = expense[6] if expense[6] is not None else "N/A"
+                supplier = expense[7] if expense[7] else "N/A"
+                
+                total_cost_val = expense[3] if expense[3] is not None else 0.0
+                total_cost_str = f"£{total_cost_val:.2f}"
 
-            monthly_total += total_cost_float
-            
-            # 3. Insert into Treeview
-            self.expenses_tree.insert("", "end", iid=str(e[0]), 
-                values=(
-                    str(e[0]), # id
-                    e[6],       # date
-                    e[1],       # item_name
-                    f"{e[2]:.2f}", # cost
-                    e[3],       # quantity
-                    e[4],       # supplier
-                    f"{e[5]:.2f}"  # total_cost
-                )
-            )
+                # Tree Columns: ("ID", "Date", "Item Name", "Cost", "Quantity", "Supplier", "Total Cost")
+                self.expenses_tree.insert("", "end", values=(
+                    exp_id,
+                    exp_date,
+                    item_name,
+                    unit_cost,
+                    quantity,
+                    supplier,
+                    total_cost_str
+                ))
+                
+                total_expense_sum += total_cost_val
 
-        # 4. Update Summary Label
-        if self.total_expense_label:
-            display_month = selected_month.replace('-', '/') if selected_month != "All Months" else selected_month
-            self.total_expense_label.config(text=f"Total Expenses ({display_month}): ${monthly_total:.2f}")
+            self.total_expense_label.config(text=f"TOTAL EXPENSES: £{total_expense_sum:.2f}")
 
-    # ---------------- PROFIT CHART TAB SETUP AND LOGIC (MODIFIED) ----------------
+        except Exception as e:
+            messagebox.showerror("Expense Data Error", f"Failed to load expenses: {e}")
+
+    def filter_expenses_by_month(self, event=None):
+        """Called when the combobox selection changes."""
+        self.populate_expenses()
+
+    # ---------------- PROFIT CHART TAB (UPDATED) ----------------
+    
+    # --- UPDATED: setup_chart_tab ---
     def setup_chart_tab(self, parent):
-        self.chart_frame = ttk.Frame(parent)
-        self.chart_frame.pack(fill="both", expand=True)
-        # Placeholder for initial plot
-        self.plot_profit_chart() 
+        # --- 1. Top Control Frame (for the new filter) ---
+        top_controls_frame = ttk.Frame(parent)
+        top_controls_frame.pack(fill="x", padx=10, pady=(5, 0))
 
-    def plot_profit_chart(self):
-        # Clear previous chart if exists
-        if self.chart_canvas_container:
-            self.chart_canvas_container.get_tk_widget().destroy()
-            self.chart_canvas_container = None
+        ttk.Label(top_controls_frame, text="Select Period:", style='Bold.TLabel').pack(side="left", padx=(0, 5))
         
-        for widget in self.chart_frame.winfo_children():
-            widget.destroy()
+        self.chart_month_selector = ttk.Combobox(top_controls_frame, state="readonly", width=18, style='TCombobox')
+        self.chart_month_selector.pack(side="left")
+        # Bind the selector to the new update function
+        self.chart_month_selector.bind("<<ComboboxSelected>>", self.update_chart_tab)
+        
+        # --- 2. Main Area (for Graph and Summary) ---
+        main_chart_area_frame = ttk.Frame(parent)
+        main_chart_area_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # 1. Get Monthly Data (Sales and Expenses)
+        # --- 3. Graph Frame (will hold the canvas) ---
+        self.graph_frame = ttk.Frame(main_chart_area_frame)
+        self.graph_frame.pack(side="left", fill="both", expand=True)
+
+        # --- 4. Summary Panel (on the right) ---
+        summary_panel = ttk.Frame(main_chart_area_frame, width=350)
+        summary_panel.pack(side="right", fill="y", padx=(15, 0))
+        summary_panel.pack_propagate(False) # Prevents frame from shrinking
+
+        # --- Summary Group 1: Monthly Snapshot ---
+        monthly_summary_frame = ttk.LabelFrame(summary_panel, text="Snapshot", style='Viewer.TLabelframe', padding=15)
+        monthly_summary_frame.pack(fill="x", pady=(0, 10))
+
+        # We need labels to update, so we make them class attributes
+        self.summary_revenue_label = self.create_summary_row(monthly_summary_frame, "Total Revenue:", "£0.00", 0)
+        self.summary_cogs_label = self.create_summary_row(monthly_summary_frame, "Cost of Goods (COGS):", "£0.00", 1)
+        self.summary_overhead_label = self.create_summary_row(monthly_summary_frame, "Overhead Expenses:", "£0.00", 2)
         
-        all_sales = get_all_sales()
-        all_expenses = get_all_expenses()
+        # Add a separator
+        ttk.Separator(monthly_summary_frame, orient='horizontal').grid(row=3, column=0, columnspan=2, sticky='ew', pady=8)
         
-        expense_data = {}
-        # Expense DB structure: (id, item_name, cost, quantity, supplier, total_cost, date)
+        # The final profit label (make it bold)
+        ttk.Label(monthly_summary_frame, text="Net Profit:", font=('Arial', 11, 'bold'), background=BG_SECONDARY).grid(row=4, column=0, sticky='w', pady=(5,0))
+        self.summary_profit_label = ttk.Label(monthly_summary_frame, text="£0.00", font=('Arial', 11, 'bold'), background=BG_SECONDARY, anchor='e')
+        self.summary_profit_label.grid(row=4, column=1, sticky='e', pady=(5,0))
+
+        # --- Summary Group 2: Total Inventory (Live Data) ---
+        inventory_summary_frame = ttk.LabelFrame(summary_panel, text="Total Inventory (Current)", style='Viewer.TLabelframe', padding=15)
+        inventory_summary_frame.pack(fill="x", pady=10)
+        
+        self.summary_total_stock_label = self.create_summary_row(inventory_summary_frame, "Total Fragrances:", "0", 0)
+        self.summary_total_value_label = self.create_summary_row(inventory_summary_frame, "Total Stock Value (Cost):", "£0.00", 1) # Label text updated
+        
+        # --- NEW ROW ADDED ---
+        self.summary_retail_value_label = self.create_summary_row(inventory_summary_frame, "Total Retail Value:", "£0.00", 2) 
+        # ---------------------
+        
+        # Configure columns for right-alignment
+        monthly_summary_frame.grid_columnconfigure(1, weight=1)
+        inventory_summary_frame.grid_columnconfigure(1, weight=1)
+
+    # --- NEW: create_summary_row (Helper Function) ---
+    def create_summary_row(self, parent, text, default_value, row):
+        """Helper to create a text-label and a value-label row."""
+        ttk.Label(parent, text=text, background=BG_SECONDARY).grid(row=row, column=0, sticky='w')
+        value_label = ttk.Label(parent, text=default_value, background=BG_SECONDARY, anchor='e', style='Bold.TLabel')
+        value_label.grid(row=row, column=1, sticky='ew')
+        return value_label
+        
+    # --- MODIFIED: update_chart_tab (Master Function) ---
+    def update_chart_tab(self, event=None):
+        """
+        Master function to refresh all data on the Profit Chart tab.
+        This calculates summary stats AND calls the plot function.
+        """
+        
+        # --- 1. Update Inventory Summary (Always Live) ---
+        try:
+            all_fragrances = get_all_fragrances()
+            total_stock = 0
+            total_cost_value = 0.0 # Renamed for clarity
+            total_retail_value = 0.0 # NEW variable
+            
+            for f in all_fragrances:
+                # f[8] = quantity, f[5] = unit_cost, f[6] = sale_price
+                stock = f[8] or 0
+                cost = f[5] or 0.0
+                sale_price = f[6] or 0.0 # Get sale price
+                
+                total_stock += stock
+                total_cost_value += (stock * cost)
+                total_retail_value += (stock * sale_price) # Calculate Retail Value
+            
+            self.summary_total_stock_label.config(text=f"{total_stock} units")
+            self.summary_total_value_label.config(text=f"£{total_cost_value:.2f}") # Uses cost value
+            self.summary_retail_value_label.config(text=f"£{total_retail_value:.2f}") # Updates new retail value label
+        except Exception as e:
+            print(f"Error calculating inventory: {e}")
+            self.summary_total_stock_label.config(text="Error")
+            self.summary_total_value_label.config(text="Error")
+            self.summary_retail_value_label.config(text="Error") # Error handler for new label
+
+        # --- 2. Get All Financial Data & Populate Filter ---
+        try:
+            all_sales = get_all_sales()
+            all_expenses = get_all_expenses()
+            
+            # Get the processed monthly data
+            financial_data = self.get_financial_data(all_sales, all_expenses)
+            
+            # Populate the month selector
+            months = sorted(financial_data.keys(), reverse=True)
+            current_selection = self.chart_month_selector.get()
+            self.chart_month_selector['values'] = ["All Time"] + months
+            
+            # Ensure selection is valid
+            if not current_selection or current_selection not in (["All Time"] + months):
+                self.chart_month_selector.set("All Time")
+            
+            selected_period = self.chart_month_selector.get()
+
+            # --- 3. Update Summary Panel based on selection ---
+            if selected_period == "All Time":
+                # Sum all months
+                total_revenue = sum(data['revenue'] for data in financial_data.values())
+                total_cogs = sum(data['cogs'] for data in financial_data.values())
+                total_overhead = sum(data['overhead'] for data in financial_data.values())
+                total_profit = sum(data['profit'] for data in financial_data.values())
+            else:
+                # Get specific month
+                data = financial_data.get(selected_period, {'revenue': 0, 'cogs': 0, 'overhead': 0, 'profit': 0})
+                total_revenue = data['revenue']
+                total_cogs = data['cogs']
+                total_overhead = data['overhead']
+                total_profit = data['profit']
+
+            # Set the label text
+            self.summary_revenue_label.config(text=f"£{total_revenue:.2f}")
+            self.summary_cogs_label.config(text=f"£{total_cogs:.2f}")
+            self.summary_overhead_label.config(text=f"£{total_overhead:.2f}")
+            self.summary_profit_label.config(text=f"£{total_profit:.2f}")
+            
+            # --- 4. Call the Plot Function ---
+            self.plot_profit_chart(financial_data, selected_period)
+
+        except Exception as e:
+            messagebox.showerror("Chart Error", f"Could not load chart data: {e}")
+            print(f"Update Chart Tab Error: {e}")
+
+    # --- NEW: get_financial_data (Helper Function) ---
+    def get_financial_data(self, all_sales, all_expenses):
+        """
+        Helper function to process raw sales/expense data into a clean monthly dictionary.
+        Returns: {'YYYY-MM': {'revenue': X, 'cogs': Y, 'overhead': Z, 'profit': P}, ...}
+        """
+        overhead_data = {}
+        # DB: id[0], name[1], desc[2], amount[3], date[4], unit_cost[5], qty[6], supplier[7]
         for e in all_expenses:
-            date_str = e[6] # --- FIXED: Index 6 is the date column
+            date_str = e[4] # Date
             if date_str:
                 month_key = date_str[:7]
-                try:
-                    total_cost = float(e[5]) # --- FIXED: Index 5 is the total_cost
-                except (ValueError, TypeError):
-                    total_cost = 0.0
+                total_cost = float(e[3] or 0.0) # amount
+                overhead_data[month_key] = overhead_data.get(month_key, 0.0) + total_cost
 
-                expense_data[month_key] = expense_data.get(month_key, 0.0) + total_cost
-
-        # 2. Consolidate Data (Calculating Monthly Sales Totals)
-        sales_totals = {}
+        sales_data = {}
         # sales: (s.id, f.name, c.name, s.qty_sold, s.unit_cost, s.sale_price, s.revenue, s.profit, s.date)
         for sale in all_sales:
-            date_str = sale[8] # Index 8 is the date column
+            date_str = sale[8] # Date
             if date_str:
                 month_key = date_str[:7]
-                revenue = float(sale[6])
-                # COGS (Cost of Goods Sold) = unit_cost * qty_sold
-                cogs = float(sale[4]) * float(sale[3]) 
+                revenue = float(sale[6] or 0.0)
+                cogs = float(sale[4] or 0.0) * float(sale[3] or 0.0) # unit_cost * qty_sold
                 
-                if month_key not in sales_totals:
-                    sales_totals[month_key] = {'revenue': 0.0, 'cogs': 0.0}
+                if month_key not in sales_data:
+                    sales_data[month_key] = {'revenue': 0.0, 'cogs': 0.0}
                 
-                sales_totals[month_key]['revenue'] += revenue
-                sales_totals[month_key]['cogs'] += cogs
+                sales_data[month_key]['revenue'] += revenue
+                sales_data[month_key]['cogs'] += cogs
                 
-        all_months = sorted(list(set(sales_totals.keys()) | set(expense_data.keys())))
+        # Combine all data
+        all_months = sorted(list(set(sales_data.keys()) | set(overhead_data.keys())))
         
-        if not all_months:
-            ttk.Label(self.chart_frame, text="No sales or expense data available to plot.", font=('Arial', 12, 'italic')).pack(pady=50)
+        final_data = {}
+        for month in all_months:
+            revenue = sales_data.get(month, {}).get('revenue', 0.0)
+            cogs = sales_data.get(month, {}).get('cogs', 0.0)
+            overhead = overhead_data.get(month, 0.0)
+            profit = revenue - (cogs + overhead)
+            
+            final_data[month] = {
+                'revenue': revenue,
+                'cogs': cogs,
+                'overhead': overhead,
+                'profit': profit
+            }
+        return final_data
+
+    # --- MODIFIED: plot_profit_chart ---
+    def plot_profit_chart(self, financial_data, selected_period):
+        """
+        Draws the profit chart based on pre-calculated data and the selected period.
+        """
+        # Clear previous chart
+        for widget in self.graph_frame.winfo_children():
+            widget.destroy()
+            
+        if not financial_data:
+            ttk.Label(self.graph_frame, text="No sales or expense data available to plot.", font=('Arial', 12, 'italic')).pack(pady=50)
             return
 
-        revenue = [sales_totals.get(m, {'revenue': 0.0})['revenue'] for m in all_months]
-        sales_cogs = [sales_totals.get(m, {'cogs': 0.0})['cogs'] for m in all_months]
-        
-        # Total operating cost (COGS + general overhead expenses)
-        general_expenses = [expense_data.get(m, 0.0) for m in all_months]
-        total_expense = [sales_cogs[i] + general_expenses[i] for i in range(len(all_months))]
-        
-        profit = [revenue[i] - total_expense[i] for i in range(len(all_months))]
+        try:
+            # --- Prepare data based on selected period ---
+            if selected_period == "All Time":
+                all_months = sorted(financial_data.keys())
+                revenue = [financial_data[m]['revenue'] for m in all_months]
+                sales_cogs = [financial_data[m]['cogs'] for m in all_months]
+                general_expenses = [financial_data[m]['overhead'] for m in all_months]
+                profit = [financial_data[m]['profit'] for m in all_months]
+                plot_title = "Monthly Financial Summary (All Time)"
+            else:
+                # Plotting for a single selected month
+                data = financial_data.get(selected_period, {'revenue': 0, 'cogs': 0, 'overhead': 0, 'profit': 0})
+                all_months = [selected_period]
+                revenue = [data['revenue']]
+                sales_cogs = [data['cogs']]
+                general_expenses = [data['overhead']]
+                profit = [data['profit']]
+                plot_title = f"Financial Summary for {selected_period}"
+            
+            # --- Plotting with Matplotlib ---
+            plt.style.use('seaborn-v0_8-notebook') 
+            fig, ax1 = plt.subplots(figsize=(10, 5))
+            
+            width = 0.25
+            x = np.arange(len(all_months))
 
-        # 3. Plotting with Matplotlib
-        fig, ax1 = plt.subplots(figsize=(10, 5))
-        
-        # Bar Chart for Revenue and Total Expense
-        width = 0.35
-        x = range(len(all_months))
-        
-        ax1.bar([i - width/2 for i in x], revenue, width, label='Total Revenue', color=PRIMARY_ACCENT)
-        ax1.bar([i + width/2 for i in x], total_expense, width, label='Total Expenses', color=LOW_STOCK_COLOR)
-        
-        ax1.set_xlabel("Month (YYYY-MM)")
-        ax1.set_ylabel("Amount ($)", color=FONT_COLOR)
-        ax1.tick_params(axis='y', labelcolor=FONT_COLOR)
-        ax1.set_xticks(x)
-        ax1.set_xticklabels(all_months, rotation=45, ha="right")
-        ax1.legend(loc='upper left')
+            rects1 = ax1.bar(x - width, revenue, width, label='Total Revenue', color='#4CAF50')
+            rects2 = ax1.bar(x, sales_cogs, width, label='Cost of Goods (COGS)', color='#FFC107')
+            rects3 = ax1.bar(x + width, general_expenses, width, label='Overhead Expenses', color='#F44336')
+            
+            # Only add bar labels if we have a reasonable number of bars
+            if len(all_months) <= 12:
+                ax1.bar_label(rects1, padding=3, fmt='£%.2f', fontsize=8)
+                ax1.bar_label(rects2, padding=3, fmt='£%.2f', fontsize=8)
+                ax1.bar_label(rects3, padding=3, fmt='£%.2f', fontsize=8)
 
-        # Line for Profit (Secondary Axis)
-        ax2 = ax1.twinx()
-        ax2.plot(x, profit, color='#4CAF50', marker='o', linestyle='-', linewidth=2, label='Net Profit')
-        ax2.set_ylabel("Net Profit ($)", color='#4CAF50')
-        ax2.tick_params(axis='y', labelcolor='#4CAF50')
-        ax2.legend(loc='upper right')
+            ax1.set_ylabel("Amount (£)", color=FONT_COLOR)
+            ax1.set_xticks(x)
+            ax1.set_xticklabels(all_months, rotation=45, ha="right")
+            ax1.set_title(plot_title, fontsize=14, fontweight='bold')
+            ax1.grid(axis='y', linestyle='--', alpha=0.7)
 
-        fig.tight_layout()
-        
-        # 4. Embed into Tkinter
-        self.chart_canvas_container = FigureCanvasTkAgg(fig, master=self.chart_frame)
-        self.chart_canvas_container.draw()
-        self.chart_canvas_container.get_tk_widget().pack(fill=tk.BOTH, expand=1)
+            ax2 = ax1.twinx()
+            ax2.plot(x, profit, color=PRIMARY_ACCENT, marker='o', linestyle='-', linewidth=2.5, label='Net Profit')
+            ax2.set_ylabel("Net Profit (£)", color=PRIMARY_ACCENT, fontweight='bold')
+            ax2.tick_params(axis='y', labelcolor=PRIMARY_ACCENT)
+            ax2.axhline(0, color='grey', linestyle='--', linewidth=1)
+
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax2.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+
+            fig.tight_layout()
+            
+            canvas = FigureCanvasTkAgg(fig, master=self.graph_frame)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=1)
+
+        except Exception as e:
+            messagebox.showerror("Chart Error", f"Could not plot profit chart: {e}")
+            print(f"Chart plot error: {e}")
+
 
 # ---------------- MAIN EXECUTION ----------------
 if __name__ == "__main__":
