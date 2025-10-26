@@ -7,7 +7,14 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import datetime # Used for date handling in sales and expense logic
 import numpy as np # Added for chart bar positioning
-
+# Assuming you saved the scanner logic in a file named qr_scanner.py
+try:
+    from qr_scanner import scan_qr_code
+except ImportError:
+    # If the file or libraries aren't present, disable the feature gracefully
+    print("Warning: qr_scanner.py or required libraries (opencv-python, pyzbar) not found. QR Scan feature will be disabled.")
+    scan_qr_code = None
+#pip install opencv-python pyzbar
 # NOTE: database.py must be present in the same directory
 from database import (
     # CONNECTION & SETUP
@@ -92,9 +99,9 @@ class FragranceManagerApp:
         self.logo_photo = None
         
         # Treeview References
-        self.men_tree = None
-        self.women_tree = None
-        self.unisex_tree = None
+        self.fragrances_tree = None # Replaces men_tree, women_tree, unisex_tree
+        self.fragrances_search_entry = None # For in-tab search
+        self.fragrances_gender_filter = None # For in-tab filter
         self.customer_tree = None
         self.sales_tree = None
         self.supplies_tree = None
@@ -126,7 +133,63 @@ class FragranceManagerApp:
 
         self.setup_ui()
         self.refresh_all_tables() # Initial population
+    def copy_oil_link(self, event):
+        """Copies the purchase link of the double-clicked oil record to the clipboard."""
+        try:
+            # Identify the item and column that was double-clicked
+            item_id = self.oils_tree.identify_row(event.y)
+            column_id = self.oils_tree.identify_column(event.x)
+            
+            # Check if an item was selected and if it's the 'Purchase Link' column
+            # The column indices start at #1 for the first *visible* column (which is 'ID' here).
+            # If 'Purchase Link' is the 5th visible column (ID, Name, Size, Price, Link),
+            # its identifier will be #5. Let's confirm the column index.
+            # Columns in setup_oils_tab: ("ID", "Name", "Size (ml)", "Price", "Purchase Link", "Quantity")
+            # Index for 'Purchase Link' is 4 (zero-indexed list of column names, but Treeview columns are #1, #2, #3, #4, #5, #6)
+            
+            if item_id and column_id == '#5': # Assuming Purchase Link is the 5th column (#5)
+                # Get the values for the selected item
+                values = self.oils_tree.item(item_id, 'values')
+                
+                # 'Purchase Link' is at index 4 (0-based) in the values tuple
+                purchase_link = values[4]
+                
+                if purchase_link:
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(purchase_link)
+                    self.root.update() # Update the clipboard
+                    messagebox.showinfo("Copied", f"Link copied to clipboard:\n{purchase_link[:60]}...")
+                else:
+                    messagebox.showwarning("No Link", "The selected oil does not have a purchase link.")
+            
+        except IndexError:
+            # Happens if the user clicks outside of a data cell
+            pass
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to copy link: {e}")
+    def scan_and_search_fragrance(self):
+        """Calls the QR scanner and uses the returned ID to search the table."""
+        if scan_qr_code is None:
+            messagebox.showerror("Feature Disabled", "The QR Scanning feature is disabled because the required libraries (opencv-python, pyzbar) or scanner file are missing.")
+            return
 
+        # Pass self.root to keep the scanner window on top
+        fragrance_id = scan_qr_code(self.root) 
+
+        if fragrance_id is not None:
+            # Convert ID to string for entry box
+            id_str = str(fragrance_id)
+            
+            # 1. Update the search entry box with the found ID
+            self.fragrances_search_entry.delete(0, tk.END)
+            self.fragrances_search_entry.insert(0, id_str)
+            
+            # 2. Trigger the search function 
+            self.filter_fragrances()
+            
+            messagebox.showinfo("Scan Complete", f"Fragrance ID {id_str} found and searched.")
+        else:
+            messagebox.showinfo("Scan Result", "No valid Fragrance ID found or scan cancelled.")       
     # ---------------- UTILITY: VALIDATION ----------------
     def validate_numeric_input(self, value, field_name, is_integer=False):
         """Checks if a string can be converted to a number, returning None on failure."""
@@ -157,9 +220,7 @@ class FragranceManagerApp:
             
     def refresh_all_tables(self):
         # Refresh logic
-        self.populate_table(self.men_tree, "Men")
-        self.populate_table(self.women_tree, "Women")
-        self.populate_table(self.unisex_tree, "Unisex")
+        self.populate_fragrances() # Replaced the three populate_table calls
         self.populate_customers()
         self.populate_sales()
         self.populate_supplies()
@@ -168,23 +229,7 @@ class FragranceManagerApp:
         self.update_fragrance_viewer(self.selected_id)
 
     # ---------------- FRAGRANCE LOGIC ----------------
-    def populate_table(self, tree, gender):
-        """Populates the fragrance treeview, applying the low stock tag."""
-        if not tree: return
-        for row in tree.get_children():
-            tree.delete(row)
-        
-        fragrances = get_all_fragrances_by_gender(gender)
-        
-        for i, f in enumerate(fragrances):
-            tags = ()
-            quantity = int(f[8] or 0) # f[8] is quantity
-            if quantity <= 5: 
-                tags = ('low_stock',)
-                
-            # f is: (id, name, desc, gender, cat, u_cost, s_price, inspired, qty, img_path)
-            tree.insert("", "end", iid=str(f[0]), tags=tags, 
-                                values=(f[0], f[1], f[3], f[4], f"{f[5]:.2f}", f"{f[6]:.2f}", f[7], quantity))
+    # --- OLD populate_table METHOD DELETED ---
 
     def update_fragrance_viewer(self, fid):
         """Loads and displays the image and details for the selected fragrance ID."""
@@ -270,111 +315,76 @@ class FragranceManagerApp:
         except Exception as e:
             print(f"Error loading logo: {e}")
             ttk.Label(parent_frame, text="LJ Fragrances Manager", font=('Arial', 18, 'bold'), foreground=PRIMARY_ACCENT, background=BG_LIGHT).pack(side="left", padx=10, pady=10)
-
-
     def setup_ui(self):
         style = ttk.Style()
         style.theme_use("alt")  
         self.root.config(bg=BG_LIGHT)
-
         # 1. Base Styles
         style.configure("TFrame", background=BG_LIGHT)
         style.configure("TLabel", background=BG_LIGHT, foreground=FONT_COLOR, font=('Arial', 10))
-        style.configure('Bold.TLabel', font=('Arial', 10, 'bold'))
-        
+        style.configure('Bold.TLabel', font=('Arial', 10, 'bold'))    
         # 2. Button Styles
         style.configure("Modern.TButton", font=('Arial', 10, 'bold'), padding=[10, 5], background=BG_SECONDARY, foreground=FONT_COLOR, relief="flat", borderwidth=1, bordercolor=BORDER_COLOR)
         style.map("Modern.TButton", background=[('active', BORDER_COLOR)], foreground=[('active', PRIMARY_ACCENT)])
         style.configure("Primary.TButton", background=PRIMARY_ACCENT, foreground=BG_LIGHT, bordercolor=PRIMARY_ACCENT)
         style.map("Primary.TButton", background=[('active', '#005BB5')])
-
         # 3. LabelFrame Style
         style.configure("Viewer.TLabelframe", background=BG_SECONDARY, foreground=FONT_COLOR, relief="solid", borderwidth=1, font=('Arial', 11, 'bold'))
         style.configure("Viewer.TLabelframe.Label", background=BG_SECONDARY, foreground=PRIMARY_ACCENT)
-
         # 4. Entry/Combobox Styles
         style.configure("TEntry", padding=5, fieldbackground=BG_LIGHT, foreground=FONT_COLOR, bordercolor=BORDER_COLOR, relief="solid", borderwidth=1, insertcolor=PRIMARY_ACCENT)
         style.configure("TCombobox", padding=5, fieldbackground=BG_LIGHT, foreground=FONT_COLOR, selectforeground=FONT_COLOR, selectbackground=BG_LIGHT, bordercolor=BORDER_COLOR, relief="solid", borderwidth=1)
-
         # 5. Notebook/Tab Styles
         style.configure("TNotebook", background=BG_LIGHT, borderwidth=0)
         style.configure("TNotebook.Tab", padding=[15, 8], background=BG_SECONDARY, foreground=FONT_COLOR, font=('Arial', 10, 'bold'))
         style.map("TNotebook.Tab", background=[('selected', PRIMARY_ACCENT)], foreground=[('selected', BG_LIGHT)])
-
         # 6. Treeview Styles
         style.configure("Treeview.Heading", font=('Arial', 10, 'bold'), background=PRIMARY_ACCENT, foreground=BG_LIGHT, relief="flat", padding=[5, 8])
         style.configure("Treeview", background=BG_LIGHT, foreground=FONT_COLOR, fieldbackground=BG_LIGHT, font=('Arial', 10), rowheight=25, borderwidth=1, relief="solid")
         style.map("Treeview", background=[('selected', PRIMARY_ACCENT)], foreground=[('selected', BG_LIGHT)])
-
-
+        # --- SYNTAX ERROR LINE REMOVED FROM HERE ---
         # --- LAYOUT WIDGETS ---
         main_frame = ttk.Frame(self.root)
         main_frame.pack(expand=True, fill="both", padx=10, pady=10)
-
         # Top Frame: Logo, Search, and Image/Detail Viewer
         top_frame = ttk.Frame(main_frame)
-        top_frame.pack(fill="x", pady=5)
-        
+        top_frame.pack(fill="x", pady=5)        
         # --- NEW: Left Panel (for Logo and Search) ---
         left_panel = ttk.Frame(top_frame)
         left_panel.pack(side="left", fill="y", padx=5, anchor="n")
-
         # LOGO PLACEMENT (inside left_panel)
         logo_frame = ttk.Frame(left_panel)
         logo_frame.pack(fill="x", anchor="w")
         self.load_logo(logo_frame)
-        
-        # Search (inside left_panel, below logo_frame)
-        search_container = ttk.Frame(left_panel)
-        search_container.pack(fill="x", anchor="w", pady=(10, 0))
-
-        search_frame = ttk.Frame(search_container)
-        search_frame.pack(side="top", anchor="w")
-
-        ttk.Label(search_frame, text="🔍 Search Fragrance:", style='Bold.TLabel').pack(side="left", padx=5)
-        self.search_entry = ttk.Entry(search_frame, width=30)
-        self.search_entry.pack(side="left", padx=5)
-        ttk.Button(search_frame, text="Search", command=self.search_fragrance, style='Modern.TButton').pack(side="left", padx=5)
-        ttk.Button(search_frame, text="Clear", command=self.refresh_all_tables, style='Modern.TButton').pack(side="left", padx=5)
-
         # RIGHT SIDE: Image Viewer
         self.image_viewer_frame = ttk.LabelFrame(top_frame, text="Fragrance Details", padding="10", style='Viewer.TLabelframe')
         self.image_viewer_frame.pack(side="right", fill="y", padx=20, anchor="n")
-        
         self.image_label = ttk.Label(self.image_viewer_frame, anchor="center", background=BG_SECONDARY, borderwidth=1, relief="solid")
         self.image_label.grid(row=0, column=0, padx=5, pady=5)
-        
         self.detail_text_label = tk.Label(self.image_viewer_frame, justify=tk.LEFT, text="Select a fragrance to view details.", width=35, anchor="nw", background=BG_SECONDARY, fg=FONT_COLOR, font=('Arial', 10))
         self.detail_text_label.grid(row=0, column=1, padx=10, pady=5, sticky="nsw")
-
         # Tab Control (Notebook)
         self.tabControl = ttk.Notebook(main_frame)
         self.tabControl.pack(expand=1, fill="both", pady=10)
-
         # Tabs
-        self.men_tab = ttk.Frame(self.tabControl)
-        self.women_tab = ttk.Frame(self.tabControl)
-        self.unisex_tab = ttk.Frame(self.tabControl)
+        # FIXED: Replaced men/women/unisex tabs with a single fragrance_tab
+        self.fragrance_tab = ttk.Frame(self.tabControl) # NEW
         self.customer_tab = ttk.Frame(self.tabControl)
         self.sales_tab = ttk.Frame(self.tabControl)
         self.supplies_tab = ttk.Frame(self.tabControl)
         self.oils_tab = ttk.Frame(self.tabControl)
         self.expenses_tab = ttk.Frame(self.tabControl)
         self.chart_tab = ttk.Frame(self.tabControl)
-        
-        self.tabControl.add(self.men_tab, text="Men")
-        self.tabControl.add(self.women_tab, text="Women")
-        self.tabControl.add(self.unisex_tab, text="Unisex")
+        # FIXED: Updated tabControl.add calls
+        self.tabControl.add(self.fragrance_tab, text="Fragrances") # NEW
         self.tabControl.add(self.customer_tab, text="Customers")
         self.tabControl.add(self.sales_tab, text="Sales")
         self.tabControl.add(self.supplies_tab, text="Supplies")
         self.tabControl.add(self.oils_tab, text="Oils")
         self.tabControl.add(self.expenses_tab, text="Expenses")
         self.tabControl.add(self.chart_tab, text="Profit Chart")
-        
-        self.setup_fragrance_tab(self.men_tab, "Men")
-        self.setup_fragrance_tab(self.women_tab, "Women")
-        self.setup_fragrance_tab(self.unisex_tab, "Unisex")
+        # FIXED: Updated setup calls
+        self.setup_fragrance_tab(self.fragrance_tab, "All") # NEW
         self.setup_customer_tab(self.customer_tab) 
         self.setup_sales_tab(self.sales_tab)
         self.setup_supplies_tab(self.supplies_tab)
@@ -392,12 +402,9 @@ class FragranceManagerApp:
         """
         selected_tab_text = self.tabControl.tab(self.tabControl.select(), "text")
         
-        if self.men_tree:
-            self.men_tree.selection_set("") 
-        if self.women_tree:
-            self.women_tree.selection_set("")
-        if self.unisex_tree:
-            self.unisex_tree.selection_set("")
+        # FIXED: Check the new single fragrance tree
+        if self.fragrances_tree:
+            self.fragrances_tree.selection_set("") 
 
         self.selected_id = None
         
@@ -414,105 +421,11 @@ class FragranceManagerApp:
             self.populate_supplies()
         elif selected_tab_text == "Oils":
             self.populate_oils()
-        elif selected_tab_text == "Men":
-             self.populate_table(self.men_tree, "Men")
-        elif selected_tab_text == "Women":
-             self.populate_table(self.women_tree, "Women")
-        elif selected_tab_text == "Unisex":
-             self.populate_table(self.unisex_tree, "Unisex")
+        # FIXED: Updated to check for new "Fragrances" tab
+        elif selected_tab_text == "Fragrances":
+             self.populate_fragrances()
 
-
-    # ---------------- FRAGRANCE TAB SETUP ----------------
-    def setup_fragrance_tab(self, parent, gender):
-        # 1. Container for Table
-        table_frame = ttk.Frame(parent)
-        table_frame.pack(fill="both", expand=True, padx=5, pady=5)
-
-        columns = ("ID", "Name", "Gender", "Category", "Unit Cost", "Sale Price", "Inspired By", "Quantity")
-        tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
-        
-        tree.tag_configure('low_stock', background=LOW_STOCK_COLOR, foreground=BG_LIGHT)
-        
-        # Define column widths
-        tree.column("ID", width=40, anchor="center")
-        tree.column("Name", width=250)
-        tree.column("Gender", width=80, anchor="center")
-        tree.column("Category", width=120)
-        tree.column("Unit Cost", width=80, anchor="center")
-        tree.column("Sale Price", width=80, anchor="center")
-        tree.column("Inspired By", width=200)
-        tree.column("Quantity", width=80, anchor="center")
-
-        for col in columns:
-            tree.heading(col, text=col)
-        
-        tree.pack(side="left", fill="both", expand=True)
-        
-        # Assign to self for later use
-        if gender == "Men":
-            self.men_tree = tree
-        elif gender == "Women":
-            self.women_tree = tree
-        elif gender == "Unisex":
-            self.unisex_tree = tree
-            
-        tree.bind("<<TreeviewSelect>>", self.on_fragrance_select)
-
-        # Scrollbar
-        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
-        tree.configure(yscroll=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        
-        # 2. Button Frame
-        btn_frame = ttk.Frame(parent)
-        btn_frame.pack(fill="x", pady=5)
-        
-        ttk.Button(btn_frame, text="➕ Add Fragrance", command=lambda: self.open_fragrance_form(edit=False), style='Primary.TButton').pack(side="left", padx=5)
-        ttk.Button(btn_frame, text="✏️ Edit Selected", command=lambda: self.open_fragrance_form(edit=True), style='Modern.TButton').pack(side="left", padx=5)
-        ttk.Button(btn_frame, text="❌ Delete Selected", command=self.delete_fragrance_record, style='Modern.TButton').pack(side="left", padx=5)
-        ttk.Button(btn_frame, text="🛒 Record Sale", command=self.record_sale, style='Modern.TButton').pack(side="right", padx=5)
-        ttk.Button(btn_frame, text="🔄 Refresh", command=self.refresh_all_tables, style='Modern.TButton').pack(side="right", padx=5)
-        
-        self.populate_table(tree, gender)
-
-    def search_fragrance(self):
-        """Filters all fragrance treeviews based on the search entry content."""
-        search_term = self.search_entry.get().strip().lower()
-        
-        def filter_tree(tree, gender):
-            if tree:
-                for row in tree.get_children():
-                    tree.delete(row)
-            else:
-                return 
-            
-            fragrances = get_all_fragrances_by_gender(gender)
-            
-            if search_term:
-                filtered_fragrances = []
-                for f in fragrances:
-                    name = str(f[1] or "").lower()
-                    desc = str(f[2] or "").lower()
-                    
-                    if search_term in name or search_term in desc:
-                        filtered_fragrances.append(f)
-            else:
-                filtered_fragrances = fragrances 
-
-            for i, f in enumerate(filtered_fragrances):
-                tags = ()
-                quantity = int(f[8] or 0)
-                if quantity <= 5: 
-                    tags = ('low_stock',)
-                    
-                tree.insert("", "end", iid=str(f[0]), tags=tags, 
-                                values=(f[0], f[1], f[3], f[4], f"{f[5]:.2f}", f"{f[6]:.2f}", f[7], quantity))
-
-        filter_tree(self.men_tree, "Men")
-        filter_tree(self.women_tree, "Women")
-        filter_tree(self.unisex_tree, "Unisex")
-        
-        self.update_fragrance_viewer(None)
+    # --- OLD search_fragrance METHOD DELETED ---
 
     def choose_image(self, entry_widget):
         path = filedialog.askopenfilename(
@@ -602,6 +515,173 @@ class FragranceManagerApp:
                    command=save, style='Primary.TButton').grid(row=9, column=1, pady=10, sticky="e")
         form_frame.grid_columnconfigure(1, weight=1)
 
+    # ---------------- FRAGRANCE TAB SETUP (REFACTORED) ----------------
+    def setup_fragrance_tab(self, parent, gender_type):
+        """Sets up the Fragrances tab layout, table, and controls.
+        
+        :param parent: The Tkinter notebook tab frame.
+        :param gender_type: The gender associated with this tab (e.g., "Men", "Women").
+        """
+        
+        # NOTE: Although 'gender_type' is passed, it is not used in the 
+        # UI setup below as the filter dropdown handles gender filtering.
+        # However, we must accept it to match the function call.
+        
+        # --- Filter and Search Frame ---
+        filter_frame = ttk.Frame(parent, padding="5 5 5 0")
+        filter_frame.pack(fill="x")
+        
+        # Search Entry and Button
+        ttk.Label(filter_frame, text="Search Fragrances:").pack(side="left", padx=(0, 5))
+        self.fragrances_search_entry = ttk.Entry(filter_frame, style='TEntry')
+        self.fragrances_search_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        # Bind the search filter to key release events for dynamic filtering
+        self.fragrances_search_entry.bind('<KeyRelease>', lambda e: self.filter_fragrances())
+        
+        # --- QR Scan Button ---
+        ttk.Button(filter_frame, 
+                   text="📷 Scan QR Code", 
+                   command=self.scan_and_search_fragrance, 
+                   style='Modern.TButton').pack(side="left", padx=(5, 10))
+        # ----------------------
+        
+        # Gender Filter Dropdown
+        ttk.Label(filter_frame, text="Filter by Gender:").pack(side="left", padx=(10, 5))
+        # FIXED: Values changed from "Male"/"Female" to "Men"/"Women" to match DB
+        self.fragrances_gender_filter = ttk.Combobox(filter_frame, values=["All", "Men", "Women", "Unisex"], state="readonly", width=10)
+        self.fragrances_gender_filter.set("All")
+        self.fragrances_gender_filter.bind("<<ComboboxSelected>>", lambda e: self.filter_fragrances())
+        self.fragrances_gender_filter.pack(side="left")
+
+        # --- Table Setup ---
+        table_frame = ttk.Frame(parent)
+        table_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # FIXED: Columns updated to match database schema and old populate_table logic
+        columns = ("ID", "Name", "Gender", "Category", "Unit Cost", "Sale Price", "Inspired By", "Quantity")
+        self.fragrances_tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
+        
+        # FIXED: Column definitions updated
+        self.fragrances_tree.column("ID", width=40, anchor="center")
+        self.fragrances_tree.column("Name", width=180)
+        self.fragrances_tree.column("Gender", width=80, anchor="center")
+        self.fragrances_tree.column("Category", width=120)
+        self.fragrances_tree.column("Unit Cost", width=80, anchor="e")
+        self.fragrances_tree.column("Sale Price", width=80, anchor="e")
+        self.fragrances_tree.column("Inspired By", width=180)
+        self.fragrances_tree.column("Quantity", width=60, anchor="center")
+        
+        for col in columns: self.fragrances_tree.heading(col, text=col)
+        
+        # --- CORRECTED LINE ADDED HERE ---
+        self.fragrances_tree.tag_configure('low_stock', foreground=LOW_STOCK_COLOR)
+        # ---------------------------------
+        
+        self.fragrances_tree.pack(side="left", fill="both", expand=True)
+        self.fragrances_tree.bind("<<TreeviewSelect>>", self.on_fragrance_select)
+
+        scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.fragrances_tree.yview)
+        self.fragrances_tree.configure(yscroll=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        
+        # --- Button Frame ---
+        btn_frame = ttk.Frame(parent)
+        btn_frame.pack(fill="x", pady=5)
+        
+        ttk.Button(btn_frame, text="➕ Add Fragrance", command=lambda: self.open_fragrance_form(edit=False), style='Primary.TButton').pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="✏️ Edit Selected", command=lambda: self.open_fragrance_form(edit=True), style='Modern.TButton').pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="❌ Delete Selected", command=self.delete_fragrance_record, style='Modern.TButton').pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="📦 Record Sale", command=self.open_sale_form, style='Modern.TButton').pack(side="left", padx=5)
+
+        # Initialize the table population
+        self.populate_fragrances() # This method will be added next
+
+    # ---------------- NEW/REBUILT FRAGRANCE METHODS ----------------
+
+    def populate_fragrances(self, event=None):
+        """Wrapper to populate the main fragrance tree."""
+        # This just calls the filter function, which handles all population
+        self.filter_fragrances()
+
+    def filter_fragrances(self, event=None):
+        """Filters the fragrance tree based on search and gender dropdown."""
+        if not self.fragrances_tree:
+            return
+
+        try:
+            # Get filter values from the widgets
+            search_term = self.fragrances_search_entry.get().strip().lower()
+            gender_filter = self.fragrances_gender_filter.get()
+        except Exception:
+            return # Widgets may not be ready yet
+
+        # Clear the tree
+        for row in self.fragrances_tree.get_children():
+            self.fragrances_tree.delete(row)
+
+        # Get all fragrances from DB
+        all_fragrances = get_all_fragrances() 
+
+        # Apply filters
+        filtered_list = []
+        for f in all_fragrances:
+            # DB Schema: (id[0], name[1], desc[2], gender[3], cat[4], u_cost[5], s_price[6], inspired[7], qty[8], img_path[9])
+            
+            # 1. Gender Filter
+            if gender_filter != "All" and f[3] != gender_filter:
+                continue
+            
+            # 2. Search Filter (checks ID, Name, and Inspired By)
+            if search_term:
+                f_id = str(f[0])
+                f_name = str(f[1] or "").lower()
+                f_inspired = str(f[7] or "").lower()
+                
+                if (search_term not in f_id and
+                    search_term not in f_name and
+                    search_term not in f_inspired):
+                    continue
+            
+            # If it passes all filters, add to list
+            filtered_list.append(f)
+
+        # Populate the tree with the filtered list
+        for i, f in enumerate(filtered_list):
+            tags = ()
+            quantity = int(f[8] or 0) # f[8] is quantity, safely defaulted to 0
+            if quantity <= 5: 
+                tags = ('low_stock',)
+            
+            # --- FIX APPLIED HERE: Using (f[5] or 0.0) and (f[6] or 0.0) ---
+            # This handles empty strings or None by defaulting to 0.0 before conversion.
+            unit_cost = f"{float(f[5] or 0.0):.2f}"
+            sale_price = f"{float(f[6] or 0.0):.2f}"
+            # --------------------------------------------------------------------------
+            
+            # Columns: ("ID", "Name", "Gender", "Category", "Unit Cost", "Sale Price", "Inspired By", "Quantity")
+            self.fragrances_tree.insert("", "end", iid=str(f[0]), tags=tags, 
+                                values=(f[0], f[1], f[3], f[4], unit_cost, sale_price, f[7], quantity))
+
+    def search_from_top_bar(self):
+        """Takes text from top search bar, puts it in the in-tab search, and filters."""
+        search_term = self.search_entry.get()
+        
+        if self.fragrances_search_entry:
+            # 1. Put text in the tab's search bar
+            self.fragrances_search_entry.delete(0, tk.END)
+            self.fragrances_search_entry.insert(0, search_term)
+        
+        try:
+            # 2. Switch to the fragrance tab
+            self.tabControl.select(self.fragrance_tab)
+        except tk.TclError:
+            pass # Tab already selected or doesn't exist
+            
+        # 3. Trigger the filter
+        self.filter_fragrances()
+
+    # ---------------- END NEW METHODS ----------------
+    
     # ---------------- CUSTOMER LOGIC ----------------
     def on_customer_select(self, event):
         """Sets the selected_customer_id when a customer is selected."""
@@ -900,6 +980,11 @@ class FragranceManagerApp:
         ttk.Button(btn_frame, text="➕ Add Supply", command=lambda: self.open_supply_form(edit=False), style='Primary.TButton').pack(side="left", padx=5)
         ttk.Button(btn_frame, text="✏️ Edit Selected", command=lambda: self.open_supply_form(edit=True), style='Modern.TButton').pack(side="left", padx=5)
         ttk.Button(btn_frame, text="❌ Delete Selected", command=self.delete_supply_record, style='Modern.TButton').pack(side="left", padx=5)
+        
+        # --- NEW BUTTON ADDED ---
+        ttk.Button(btn_frame, text="💰 Record Purchase", command=self.record_supply_purchase, style='Modern.TButton').pack(side="right", padx=5)
+        # ------------------------
+        
         self.populate_supplies()
 
     def populate_supplies(self):
@@ -985,6 +1070,10 @@ class FragranceManagerApp:
         for col in columns: self.oils_tree.heading(col, text=col)
         self.oils_tree.pack(side="left", fill="both", expand=True)
         self.oils_tree.bind("<<TreeviewSelect>>", self.on_oil_select)
+        
+        # --- NEW BINDING ADDED FOR COPY-PASTE ---
+        self.oils_tree.bind("<Double-1>", self.copy_oil_link)
+        # ----------------------------------------
 
         scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=self.oils_tree.yview)
         self.oils_tree.configure(yscroll=scrollbar.set)
@@ -995,6 +1084,9 @@ class FragranceManagerApp:
         ttk.Button(btn_frame, text="➕ Add Oil", command=lambda: self.open_oil_form(edit=False), style='Primary.TButton').pack(side="left", padx=5)
         ttk.Button(btn_frame, text="✏️ Edit Selected", command=lambda: self.open_oil_form(edit=True), style='Modern.TButton').pack(side="left", padx=5)
         ttk.Button(btn_frame, text="❌ Delete Selected", command=self.delete_oil_record, style='Modern.TButton').pack(side="left", padx=5)
+        
+        ttk.Button(btn_frame, text="💰 Record Purchase", command=self.record_oil_purchase, style='Modern.TButton').pack(side="right", padx=5)
+        
         self.populate_oils()
 
     def populate_oils(self):
@@ -1041,7 +1133,7 @@ class FragranceManagerApp:
                     except: value = "0.00"
                 entry.insert(0, str(value) if value is not None else "")
             entries[field] = entry
-
+            
         def save():
             name = entries["Name"].get().strip(); link = entries["Purchase Link"].get().strip()
             size = self.validate_numeric_input(entries["Size (ml)"].get(), "Size", is_integer=False)
@@ -1062,6 +1154,123 @@ class FragranceManagerApp:
         ttk.Button(form_frame, text=("Save Changes" if edit else "Add Oil"), command=save, style='Primary.TButton').grid(row=len(fields), column=1, pady=10, sticky="e")
         form_frame.grid_columnconfigure(1, weight=1)
 
+    # ---------------- OPEN SALE FORM (FIXED) ----------------
+    def open_sale_form(self):
+        """Opens a form to record a new sale for the selected fragrance."""
+        
+        # 1. Check if a fragrance is selected
+        # FIXED: Changed self.selected_fragrance_id to self.selected_id
+        if not self.selected_id:
+            messagebox.showwarning("No Selection", "Please select a fragrance to record a sale for.")
+            return
+
+        # 2. Retrieve selected fragrance details to pre-fill the form
+        try:
+            # FIXED: Changed self.selected_fragrance_id to self.selected_id
+            f_data = get_fragrance_by_id(self.selected_id) 
+        except Exception:
+            messagebox.showerror("Database Error", "Could not retrieve fragrance details.")
+            return
+            
+        if not f_data:
+            messagebox.showerror("Error", "Selected fragrance item not found in database.")
+            return
+            
+        # DB Schema: (id[0], name[1], desc[2], gender[3], cat[4], u_cost[5], s_price[6], inspired[7], qty[8], img_path[9])
+        fragrance_name = f_data[1]  # Index 1 is the name
+        # FIXED: Changed f_data[3] to f_data[6] (Sale Price)
+        unit_price = float(f_data[6] or 0.0) 
+
+        # 3. Create the Form Window
+        form = tk.Toplevel(self.root)
+        form.title(f"Record Sale: {fragrance_name}")
+        form.geometry("450x350")
+        form.config(bg=BG_LIGHT)
+        form_frame = ttk.Frame(form, padding=15)
+        form_frame.pack(fill="both", expand=True)
+
+        fields = ["Fragrance Name", "Quantity Sold", "Sale Price (per unit)", "Customer Name (Optional)"]
+        entries = {}
+
+        for i, field in enumerate(fields):
+            ttk.Label(form_frame, text=f"{field}:").grid(row=i, column=0, padx=5, pady=5, sticky="w")
+            entry = ttk.Entry(form_frame, style='TEntry')
+            entry.grid(row=i, column=1, padx=5, pady=5, sticky="ew")
+            entries[field] = entry
+            
+            if field == "Fragrance Name":
+                entry.insert(0, fragrance_name)
+                entry.config(state='readonly')
+            elif field == "Sale Price (per unit)" and unit_price != 0.0:
+                entry.insert(0, f"{unit_price:.2f}")
+            elif field == "Quantity Sold":
+                entry.insert(0, "1")
+
+        # 4. Save Logic
+        def save():
+            quantity_sold = self.validate_numeric_input(entries["Quantity Sold"].get(), "Quantity Sold", is_integer=True)
+            sale_price = self.validate_numeric_input(entries["Sale Price (per unit)"].get(), "Sale Price (per unit)", is_integer=False)
+            customer_name = entries["Customer Name (Optional)"].get().strip()
+            
+            if quantity_sold is None or sale_price is None:
+                return 
+
+            if quantity_sold <= 0:
+                messagebox.showerror("Input Error", "Quantity Sold must be greater than zero.")
+                return
+
+            total_sale = sale_price * quantity_sold 
+            sale_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            # (fragrance_id, quantity, unit_price, total_sale, customer, date)
+            # FIXED: Changed self.selected_fragrance_id to self.selected_id
+            data_to_insert = (self.selected_id, quantity_sold, sale_price, total_sale, customer_name, sale_date)
+            
+            try:
+                # 1. Record the sale
+                # NOTE: This assumes your `insert_sale` function matches this tuple structure
+                # (self.selected_id, quantity_sold, sale_price, total_sale, customer_name, sale_date)
+                # Your *other* sale logic (record_sale) uses a different structure.
+                # We will use the structure from *this* function, assuming it's the intended one.
+                
+                # --- RE-FIXING based on your `database.py` imports and `record_sale` function ---
+                # The `insert_sale` function likely expects the 8-tuple structure.
+                
+                customer_id = None # This simple form doesn't select a customer ID
+                unit_cost = float(f_data[5] or 0.0) # Get unit cost
+                revenue = total_sale # `total_sale` is the same as `revenue`
+                profit = (sale_price - unit_cost) * quantity_sold
+                date = sale_date
+                
+                # This is the 8-tuple structure matching `record_sale`
+                # (fragrance_id, customer_id, qty, unit_cost, sale_price, revenue, profit, date)
+                # We use `None` for customer_id as this form doesn't select one.
+                data_to_insert_v2 = (self.selected_id, customer_id, quantity_sold, unit_cost, sale_price, revenue, profit, date)
+
+                insert_sale(data_to_insert_v2)
+                
+                # 2. Update the fragrance inventory quantity (decrement stock)
+                # FIXED: Changed f_data[4] to f_data[8] (Quantity)
+                current_stock = int(f_data[8] or 0) 
+                new_stock = current_stock - quantity_sold
+                    
+                # FIXED: Changed self.selected_fragrance_id to self.selected_id
+                update_fragrance_quantity(self.selected_id, new_stock)
+                
+                messagebox.showinfo("Success", f"Sale of {quantity_sold} units recorded. Stock updated to {new_stock}.")
+                
+                # 3. Refresh UI
+                self.populate_fragrances() # This now exists
+                self.populate_sales() 
+                self.update_chart_tab()
+                form.destroy()
+                
+            except Exception as e:
+                messagebox.showerror("Database Error", f"Could not record sale or update inventory: {e}")
+                
+        ttk.Button(form_frame, text="Record Sale", command=save, style='Primary.TButton').grid(row=len(fields), column=1, pady=15, sticky="e")
+        form_frame.grid_columnconfigure(1, weight=1) 
+        
     def delete_oil_record(self):
         if not self.selected_oil_id:
             messagebox.showwarning("Warning", "Select an oil to delete.")
@@ -1124,7 +1333,7 @@ class FragranceManagerApp:
         
         self.populate_expenses() # Initial population
 
-    def open_expense_form(self):
+    def open_expense_form(self, item_name="", unit_cost=0.0, quantity=1):
         form = tk.Toplevel(self.root)
         form.title("Record New Expense")
         form.geometry("450x300")
@@ -1141,7 +1350,17 @@ class FragranceManagerApp:
             entry.grid(row=i, column=1, padx=5, pady=5, sticky="ew")
             entries[field] = entry
             
+            # --- START NEW/MODIFIED LOGIC ---
+            if field == "Item Name":
+                entry.insert(0, item_name)
+            elif field == "Cost (per item)" and unit_cost != 0.0:
+                entry.insert(0, f"{unit_cost:.2f}")
+            elif field == "Quantity" and quantity != 1:
+                entry.insert(0, str(quantity))
+            # --- END NEW/MODIFIED LOGIC ---
+            
         def save():
+            # ... (rest of the save function is unchanged)
             item_name = entries["Item Name"].get().strip()
             supplier = entries["Supplier (Optional)"].get().strip()
             
@@ -1170,12 +1389,56 @@ class FragranceManagerApp:
                 
                 messagebox.showinfo("Success", "Expense recorded.")
                 self.populate_expenses() # Refresh table
+                self.update_chart_tab() # Refresh chart data
                 form.destroy()
             except Exception as e:
                 messagebox.showerror("Database Error", f"Could not record expense: {e}")
                 
         ttk.Button(form_frame, text="Save Expense", command=save, style='Primary.TButton').grid(row=len(fields), column=1, pady=15, sticky="e")
         form_frame.grid_columnconfigure(1, weight=1)
+        # ---------------- SUPPLIES LOGIC (Addition) ----------------
+
+    def record_supply_purchase(self):
+        """Records a purchase expense for the selected supply item."""
+        if not self.selected_supply_id:
+            messagebox.showwarning("No Selection", "Please select a supply item to record a purchase for.")
+            return
+
+        # s_data is (id, name, price, purchase_link, quantity)
+        s_data = get_supply_by_id(self.selected_supply_id) 
+        if not s_data:
+            messagebox.showerror("Error", "Supply item not found.")
+            return
+
+        item_name = s_data[1]
+        unit_cost = float(s_data[2] or 0.0) # Price
+        # We don't use s_data[4] (current stock quantity) as the default, 
+        # because a new purchase could be for any amount. Default to 1.
+        
+        self.open_expense_form(item_name=item_name, unit_cost=unit_cost, quantity=1)
+
+
+    # ---------------- OILS LOGIC (Addition) ----------------
+
+    def record_oil_purchase(self):
+        """Records a purchase expense for the selected oil item."""
+        if not self.selected_oil_id:
+            messagebox.showwarning("No Selection", "Please select an oil item to record a purchase for.")
+            return
+
+        # o_data is (id, name, size, price, purchase_link, quantity)
+        o_data = get_oil_by_id(self.selected_oil_id) 
+        if not o_data:
+            messagebox.showerror("Error", "Oil item not found.")
+            return
+
+        # Combine name and size for clarity in the expense record
+        item_name = f"{o_data[1]} ({o_data[2]}ml)" if o_data[2] else o_data[1]
+        unit_cost = float(o_data[3] or 0.0) # Price
+        
+        # We don't use o_data[5] (current stock quantity) as the default. Default to 1.
+        
+        self.open_expense_form(item_name=item_name, unit_cost=unit_cost, quantity=1)    
 
     def populate_expenses(self):
         if not self.expenses_tree:
@@ -1485,7 +1748,7 @@ class FragranceManagerApp:
             rects3 = ax1.bar(x + width, general_expenses, width, label='Overhead Expenses', color='#F44336')
             
             # Only add bar labels if we have a reasonable number of bars
-            if len(all_months) <= 12:
+            if len(all_months) <= 12:   
                 ax1.bar_label(rects1, padding=3, fmt='£%.2f', fontsize=8)
                 ax1.bar_label(rects2, padding=3, fmt='£%.2f', fontsize=8)
                 ax1.bar_label(rects3, padding=3, fmt='£%.2f', fontsize=8)
@@ -1521,4 +1784,4 @@ class FragranceManagerApp:
 if __name__ == "__main__":
     root = tk.Tk()
     app = FragranceManagerApp(root)
-    root.mainloop()
+    root.mainloop() 
